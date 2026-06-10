@@ -11,6 +11,10 @@ multi-catchment runs.
 ## Status (v0.1, in development)
 
 - [x] **GR4J** (Perrin et al. 2003), generic over `Float` (autodiff-ready)
+- [x] **HBV-light** (Seibert & Vis 2012): degree-day snow routine (optional
+      temperature forcing), soil moisture accounting, two-box response,
+      MAXBAS routing. Beats GR4J on the CAMELS-CL test catchments (val NSE
+      0.73–0.77 vs 0.64–0.74)
 - [x] Metrics: **NSE, KGE (+components), logNSE, PBIAS**
 - [x] CSV forcing + CLI runner
 - [x] **Numerical parity with airGR**: max abs diff 6e-7 mm over 10,593 daily
@@ -22,7 +26,6 @@ multi-catchment runs.
 - [x] **Split-sample validation on CAMELS-CL**: two near-natural pluvial
       catchments (Río Itata en Cholguán, Río Perquilauquén en San Manuel,
       1979–2016). Validation KGE 0.76–0.82 — see `data/camels-cl/README.md`
-- [ ] HBV-light core
 - [ ] SCE-UA
 - [ ] Semi-distributed mode (subcatchments) + snow module (v0.2)
 

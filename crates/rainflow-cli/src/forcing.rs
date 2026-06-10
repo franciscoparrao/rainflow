@@ -10,6 +10,7 @@ pub struct Forcing {
     pub dates: Vec<String>,
     pub precip: Vec<f64>,
     pub pet: Vec<f64>,
+    pub temp: Option<Vec<f64>>,
     pub qobs: Option<Vec<f64>>,
 }
 
@@ -24,6 +25,7 @@ const PRECIP_NAMES: &[&str] = &[
     "precip_mm",
 ];
 const PET_NAMES: &[&str] = &["pet", "etp", "e", "evap", "pet_mm", "pe"];
+const TEMP_NAMES: &[&str] = &["t", "temp", "tmean", "tavg", "tmedia", "temperature"];
 const QOBS_NAMES: &[&str] = &[
     "q",
     "qobs",
@@ -67,11 +69,13 @@ pub fn read_csv(path: &Path) -> Result<Forcing> {
         bail!("no PET column found (tried {PET_NAMES:?}) in {headers:?}");
     };
     let q_col = find_column(&headers, QOBS_NAMES);
+    let t_col = find_column(&headers, TEMP_NAMES);
 
     let mut forcing = Forcing {
         dates: Vec::new(),
         precip: Vec::new(),
         pet: Vec::new(),
+        temp: t_col.map(|_| Vec::new()),
         qobs: q_col.map(|_| Vec::new()),
     };
 
@@ -95,6 +99,16 @@ pub fn read_csv(path: &Path) -> Result<Forcing> {
         }
         forcing.precip.push(p);
         forcing.pet.push(pet);
+        if let (Some(c), Some(ts)) = (t_col, forcing.temp.as_mut()) {
+            let t = parse_value(record.get(c).unwrap_or("")).with_context(row_ctx)?;
+            if !t.is_finite() {
+                bail!(
+                    "missing temperature at {} — gaps are only allowed in qobs",
+                    row_ctx()
+                );
+            }
+            ts.push(t);
+        }
         if let (Some(c), Some(qs)) = (q_col, forcing.qobs.as_mut()) {
             qs.push(parse_value(record.get(c).unwrap_or("")).with_context(row_ctx)?);
         }

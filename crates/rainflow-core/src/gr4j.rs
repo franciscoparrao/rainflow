@@ -14,6 +14,7 @@
 use num_traits::Float;
 
 use crate::error::Error;
+use crate::uh::shift_front;
 
 /// Converts an `f64` literal into the working scalar type.
 ///
@@ -182,15 +183,6 @@ impl<F: Float> Gr4j<F> {
             .map(|(&p, &e)| self.step(&mut state, p, e))
             .collect())
     }
-}
-
-/// Pops the front of a UH convolution buffer, shifting the rest left.
-fn shift_front<F: Float>(buf: &mut [F]) -> F {
-    let out = buf[0];
-    buf.copy_within(1.., 0);
-    let n = buf.len();
-    buf[n - 1] = F::zero();
-    out
 }
 
 /// S-curve of UH1: `SH1(t) = (t/x4)^(5/2)` for `0 <= t <= x4`, 1 beyond.

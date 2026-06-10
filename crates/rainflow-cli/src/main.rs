@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser};
 use rainflow_core::calibrate::{self, DdsConfig, Objective};
 use rainflow_core::metrics;
-use rainflow_core::{Gr4j, Gr4jParams};
+use rainflow_core::{Gr4j, Gr4jParams, Hbv};
 
 #[derive(Parser)]
 #[command(
@@ -26,9 +26,14 @@ enum Cli {
 
 #[derive(Args)]
 struct CalibrateArgs {
-    /// CSV with columns: date, precipitation, PET, qobs (mm)
+    /// CSV with columns: date, precipitation, PET, qobs (mm) and optionally
+    /// temperature (°C, enables the HBV snow routine)
     #[arg(long)]
     forcing: PathBuf,
+
+    /// Model to calibrate
+    #[arg(long, value_parser = ["gr4j", "hbv"], default_value = "gr4j")]
+    model: String,
 
     /// Objective to maximize
     #[arg(long, value_parser = ["nse", "kge", "lognse"], default_value = "nse")]
@@ -128,34 +133,100 @@ fn split_sample(args: CalibrateArgs) -> Result<()> {
     ];
 
     println!(
-        "Split-sample test ({} steps, split at {mid}, objective {}, {} evaluations)",
-        n, args.objective, args.iterations
+        "Split-sample test of {} ({} steps, split at {mid}, objective {}, {} evaluations)",
+        args.model, n, args.objective, args.iterations
     );
     for (cal_name, val_name, cal_obs, val_obs) in &halves {
-        let cal = calibrate::calibrate_gr4j(
-            &forcing.precip,
-            &forcing.pet,
+        let cal = calibrate_dispatch(
+            &args.model,
+            &forcing,
             cal_obs,
             args.warmup,
             objective,
-            &calibrate::gr4j_default_bounds(),
             &config,
         )?;
-        let model = Gr4j::new(cal.params)?;
-        let qsim = model.run(&forcing.precip, &forcing.pet)?;
-        let val = objective_value(objective, &val_obs[args.warmup..], &qsim[args.warmup..]);
+        let val = objective_value(objective, &val_obs[args.warmup..], &cal.qsim[args.warmup..]);
         println!(
-            "  cal {cal_name}: {:.4}  ->  val {val_name}: {}   \
-             [x1={:.1} x2={:.2} x3={:.1} x4={:.2}]",
+            "  cal {cal_name}: {:.4}  ->  val {val_name}: {}   [{}]",
             cal.value,
             val.map_or_else(|| "n/a".into(), |v| format!("{v:.4}")),
-            cal.params.x1,
-            cal.params.x2,
-            cal.params.x3,
-            cal.params.x4
+            cal.desc
         );
     }
     Ok(())
+}
+
+/// Result of calibrating either model: optimum, its description and the
+/// simulated discharge at the optimum over the full series.
+struct CalOutcome {
+    value: f64,
+    evaluations: usize,
+    desc: String,
+    qsim: Vec<f64>,
+}
+
+fn calibrate_dispatch(
+    model: &str,
+    forcing: &forcing::Forcing,
+    qobs: &[f64],
+    warmup: usize,
+    objective: Objective,
+    config: &DdsConfig,
+) -> Result<CalOutcome> {
+    match model {
+        "gr4j" => {
+            let cal = calibrate::calibrate_gr4j(
+                &forcing.precip,
+                &forcing.pet,
+                qobs,
+                warmup,
+                objective,
+                &calibrate::gr4j_default_bounds(),
+                config,
+            )?;
+            let qsim = Gr4j::new(cal.params)?.run(&forcing.precip, &forcing.pet)?;
+            let p = cal.params;
+            Ok(CalOutcome {
+                value: cal.value,
+                evaluations: cal.evaluations,
+                desc: format!(
+                    "x1={:.1} x2={:.2} x3={:.1} x4={:.2}",
+                    p.x1, p.x2, p.x3, p.x4
+                ),
+                qsim,
+            })
+        }
+        "hbv" => {
+            let temp = forcing.temp.as_deref();
+            let cal = calibrate::calibrate_hbv(
+                &forcing.precip,
+                &forcing.pet,
+                temp,
+                qobs,
+                warmup,
+                objective,
+                config,
+            )?;
+            let qsim = Hbv::new(cal.params)?.run(&forcing.precip, &forcing.pet, temp)?;
+            let p = cal.params;
+            let snow = if temp.is_some() {
+                format!("tt={:.2} cfmax={:.2} sfcf={:.2} ", p.tt, p.cfmax, p.sfcf)
+            } else {
+                String::new()
+            };
+            Ok(CalOutcome {
+                value: cal.value,
+                evaluations: cal.evaluations,
+                desc: format!(
+                    "{snow}fc={:.0} lp={:.2} beta={:.2} k0={:.3} k1={:.3} k2={:.4} \
+                     uzl={:.1} perc={:.2} maxbas={:.2}",
+                    p.fc, p.lp, p.beta, p.k0, p.k1, p.k2, p.uzl, p.perc, p.maxbas
+                ),
+                qsim,
+            })
+        }
+        other => anyhow::bail!("unknown model {other:?}"),
+    }
 }
 
 fn parse_objective(name: &str) -> Result<Objective> {
@@ -189,31 +260,18 @@ fn calibrate(args: CalibrateArgs) -> Result<()> {
         ..Default::default()
     };
 
-    let cal = calibrate::calibrate_gr4j(
-        &forcing.precip,
-        &forcing.pet,
-        qobs,
-        args.warmup,
-        objective,
-        &calibrate::gr4j_default_bounds(),
-        &config,
-    )?;
+    let cal = calibrate_dispatch(&args.model, &forcing, qobs, args.warmup, objective, &config)?;
 
     println!(
-        "DDS calibration ({} evaluations, seed {}, warm-up {})",
-        cal.evaluations, args.seed, args.warmup
+        "DDS calibration of {} ({} evaluations, seed {}, warm-up {})",
+        args.model, cal.evaluations, args.seed, args.warmup
     );
-    println!(
-        "  best params: x1={:.3} x2={:.3} x3={:.3} x4={:.3}",
-        cal.params.x1, cal.params.x2, cal.params.x3, cal.params.x4
-    );
+    println!("  best params: {}", cal.desc);
     println!("  best {:>6}: {:.4}", args.objective, cal.value);
 
     // Report the full metric suite at the optimum.
-    let model = Gr4j::new(cal.params)?;
-    let qsim = model.run(&forcing.precip, &forcing.pet)?;
     let obs = &qobs[args.warmup..];
-    let sim = &qsim[args.warmup..];
+    let sim = &cal.qsim[args.warmup..];
     print_metric("NSE", metrics::nse(obs, sim));
     print_metric("KGE", metrics::kge(obs, sim));
     print_metric("logNSE", metrics::log_nse(obs, sim));

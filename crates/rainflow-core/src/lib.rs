@@ -15,8 +15,11 @@
 pub mod calibrate;
 pub mod error;
 pub mod gr4j;
+pub mod hbv;
 pub mod metrics;
+mod uh;
 
-pub use calibrate::{DdsConfig, Objective, calibrate_gr4j, dds_maximize};
+pub use calibrate::{DdsConfig, Objective, calibrate_gr4j, calibrate_hbv, dds_maximize};
 pub use error::Error;
 pub use gr4j::{Gr4j, Gr4jParams, Gr4jState};
+pub use hbv::{Hbv, HbvParams, HbvState};

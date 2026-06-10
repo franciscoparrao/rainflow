@@ -13,6 +13,7 @@ use num_traits::Float;
 
 use crate::error::Error;
 use crate::gr4j::{Gr4j, Gr4jParams};
+use crate::hbv::{Hbv, HbvParams};
 use crate::metrics;
 
 /// Deterministic SplitMix64 RNG — small, seedable, good enough for DDS.
@@ -298,6 +299,127 @@ pub fn calibrate_gr4j<F: Float>(
     })
 }
 
+/// Default HBV search bounds (HBV-light conventional ranges).
+///
+/// Without snow (9 parameters): FC, LP, BETA, K0, K1, K2, UZL, PERC, MAXBAS.
+/// With snow (12 parameters): TT, CFMAX, SFCF prepended; CFR and CWH stay at
+/// their HBV-light defaults (0.05 and 0.1).
+pub fn hbv_default_bounds<F: Float>(with_snow: bool) -> Vec<(F, F)> {
+    let lit = |v: f64| F::from(v).expect("f64 literal must be representable in F");
+    let mut bounds = Vec::new();
+    if with_snow {
+        bounds.extend([
+            (lit(-2.5), lit(2.5)), // TT
+            (lit(0.5), lit(10.0)), // CFMAX
+            (lit(0.4), lit(1.4)),  // SFCF
+        ]);
+    }
+    bounds.extend([
+        (lit(50.0), lit(700.0)), // FC
+        (lit(0.3), lit(1.0)),    // LP
+        (lit(1.0), lit(6.0)),    // BETA
+        (lit(0.05), lit(0.99)),  // K0
+        (lit(0.01), lit(0.5)),   // K1
+        (lit(0.001), lit(0.2)),  // K2
+        (lit(0.0), lit(100.0)),  // UZL
+        // Upper bound generous: wet catchments saturate the common 0-6 range.
+        (lit(0.0), lit(10.0)),   // PERC
+        (lit(1.0), lit(7.0)),    // MAXBAS
+    ]);
+    bounds
+}
+
+fn hbv_params_from_vector<F: Float>(x: &[F], with_snow: bool) -> HbvParams<F> {
+    let lit = |v: f64| F::from(v).expect("f64 literal must be representable in F");
+    let (snow, rest) = if with_snow {
+        ((x[0], x[1], x[2]), &x[3..])
+    } else {
+        // Snow routine is bypassed without temperature; placeholders only.
+        ((F::zero(), lit(3.0), F::one()), x)
+    };
+    HbvParams {
+        tt: snow.0,
+        cfmax: snow.1,
+        sfcf: snow.2,
+        cfr: lit(0.05),
+        cwh: lit(0.1),
+        fc: rest[0],
+        lp: rest[1],
+        beta: rest[2],
+        k0: rest[3],
+        k1: rest[4],
+        k2: rest[5],
+        uzl: rest[6],
+        perc: rest[7],
+        maxbas: rest[8],
+    }
+}
+
+/// Result of an HBV calibration.
+#[derive(Debug, Clone)]
+pub struct HbvCalibration<F> {
+    pub params: HbvParams<F>,
+    /// Objective value over the post-warm-up period.
+    pub value: F,
+    pub evaluations: usize,
+}
+
+/// Calibrates HBV-light on (precip, pet, temp, qobs) maximizing `objective`,
+/// skipping `warmup` initial steps. When `temp` is `Some`, the snow-routine
+/// parameters (TT, CFMAX, SFCF) are calibrated too. `qobs` may contain NaN.
+pub fn calibrate_hbv<F: Float>(
+    precip: &[F],
+    pet: &[F],
+    temp: Option<&[F]>,
+    qobs: &[F],
+    warmup: usize,
+    objective: Objective,
+    config: &DdsConfig,
+) -> Result<HbvCalibration<F>, Error> {
+    if precip.len() != pet.len() {
+        return Err(Error::ForcingLengthMismatch {
+            precip: precip.len(),
+            pet: pet.len(),
+        });
+    }
+    if qobs.len() != precip.len() {
+        return Err(Error::InvalidParameter {
+            name: "qobs",
+            reason: format!("expected {} steps, got {}", precip.len(), qobs.len()),
+        });
+    }
+    if warmup >= precip.len() {
+        return Err(Error::InvalidParameter {
+            name: "warmup",
+            reason: format!(
+                "warm-up ({warmup}) must be shorter than the series ({})",
+                precip.len()
+            ),
+        });
+    }
+
+    let with_snow = temp.is_some();
+    let bounds = hbv_default_bounds::<F>(with_snow);
+    let nan = F::nan();
+    let result = dds_maximize(&bounds, None, config, |x| {
+        let Ok(model) = Hbv::new(hbv_params_from_vector(x, with_snow)) else {
+            return nan;
+        };
+        let Ok(qsim) = model.run(precip, pet, temp) else {
+            return nan;
+        };
+        objective
+            .evaluate(&qobs[warmup..], &qsim[warmup..])
+            .unwrap_or(nan)
+    })?;
+
+    Ok(HbvCalibration {
+        params: hbv_params_from_vector(&result.params, with_snow),
+        value: result.value,
+        evaluations: result.evaluations,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,6 +520,36 @@ mod tests {
         )
         .unwrap();
         assert!(cal.value > 0.95, "calibrated NSE too low: {}", cal.value);
+    }
+
+    #[test]
+    fn hbv_calibration_recovers_a_synthetic_truth() {
+        let truth = Hbv::new(HbvParams {
+            tt: 0.0,
+            cfmax: 3.0,
+            sfcf: 1.0,
+            cfr: 0.05,
+            cwh: 0.1,
+            fc: 250.0,
+            lp: 0.7,
+            beta: 2.0,
+            k0: 0.3,
+            k1: 0.1,
+            k2: 0.01,
+            uzl: 20.0,
+            perc: 2.0,
+            maxbas: 2.5,
+        })
+        .unwrap();
+        let (p, pet) = synthetic_forcing(1500);
+        let qobs = truth.run(&p, &pet, None).unwrap();
+
+        let config = DdsConfig {
+            max_iter: 2000,
+            ..Default::default()
+        };
+        let cal = calibrate_hbv(&p, &pet, None, &qobs, 365, Objective::Nse, &config).unwrap();
+        assert!(cal.value > 0.9, "calibrated NSE too low: {}", cal.value);
     }
 
     /// Same LCG-based forcing generator as the GR4J tests.

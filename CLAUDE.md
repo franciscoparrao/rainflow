@@ -17,7 +17,8 @@ pronóstico operacional y corridas masivas. Hoy: airGR/HBV (R), TUWmodel.
 
 ## Alcance MVP (v0.1)
 - [x] GR4J (núcleo conceptual, genérico sobre `Float` — autodiff-first).
-- [ ] HBV-light.
+- [x] HBV-light (rutina nival grado-día con temperatura opcional; en las cuencas
+      CAMELS-CL pluviales supera a GR4J: NSE val 0.73–0.77 vs 0.64–0.74).
 - [x] Calibración: DDS (validada vs `airGR::Calibration_Michel`: NSE 0.7956 vs 0.7957
       en L0123001, parámetros casi idénticos). Falta SCE-UA.
 - [x] Métricas: NSE, KGE (+componentes), logNSE, PBIAS.
@@ -53,6 +54,9 @@ gradiente e híbridos física+ML. La investigación del método vive en
 1. ~~Implementar GR4J + NSE/KGE~~ ✅ (paridad airGR verificada).
 2. ~~Añadir DDS y validar calibración contra airGR~~ ✅ (mismo óptimo que Calibration_Michel).
 3. ~~CAMELS-CL + split-sample~~ ✅ (2 cuencas BNA pluviales, KGE val 0.76–0.82).
-4. HBV-light; luego definir formato de subcuencas para el paso semi-distribuido.
+4. ~~HBV-light~~ ✅ (sin paridad externa: HBV-light es software GUI; validado por
+   invariantes —balance de masa exacto, nieve, cotas— y benchmark vs GR4J).
+5. SCE-UA; CI GitHub Actions; LICENSE files; PyO3 bindings.
+6. Cuenca nival CAMELS-CL para probar la rutina de nieve de HBV con tmean_cr2met.
 5. Caso interesante para el paper: 8123001 muestra equifinalidad + no-estacionariedad
    (megasequía post-2010) — benchmark para calibración por gradiente/regularizada.

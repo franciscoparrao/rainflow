@@ -1,0 +1,18 @@
+[package]
+name = "rainflow-cli"
+description = "Command-line interface for the rainflow conceptual hydrological models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "rainflow"
+path = "src/main.rs"
+
+[dependencies]
+rainflow-core = { path = "../rainflow-core" }
+anyhow = { workspace = true }
+clap = { workspace = true }
+csv = { workspace = true }

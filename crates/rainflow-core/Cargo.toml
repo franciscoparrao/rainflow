@@ -1,0 +1,12 @@
+[package]
+name = "rainflow-core"
+description = "Conceptual rainfall-runoff model cores (GR4J, HBV) with goodness-of-fit metrics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+num-traits = { workspace = true }
+thiserror = { workspace = true }

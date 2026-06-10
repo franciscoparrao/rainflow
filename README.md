@@ -26,6 +26,11 @@ multi-catchment runs.
 - [x] **Split-sample validation on CAMELS-CL**: two near-natural pluvial
       catchments (Río Itata en Cholguán, Río Perquilauquén en San Manuel,
       1979–2016). Validation KGE 0.76–0.82 — see `data/camels-cl/README.md`
+- [x] **Snow routine validated end-to-end** on two snow-dominated Andean
+      catchments (Río Grande en Las Ramadas, Río Choapa en Cuncumén): the
+      degree-day routine lifts validation NSE from ≤ 0.23 (no snow) to
+      0.31–0.62; remaining gap is structural (lumped temperature → elevation
+      bands planned for v0.2)
 - [ ] SCE-UA
 - [ ] Semi-distributed mode (subcatchments) + snow module (v0.2)
 

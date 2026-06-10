@@ -56,7 +56,10 @@ gradiente e híbridos física+ML. La investigación del método vive en
 3. ~~CAMELS-CL + split-sample~~ ✅ (2 cuencas BNA pluviales, KGE val 0.76–0.82).
 4. ~~HBV-light~~ ✅ (sin paridad externa: HBV-light es software GUI; validado por
    invariantes —balance de masa exacto, nieve, cotas— y benchmark vs GR4J).
-5. SCE-UA; CI GitHub Actions; LICENSE files; PyO3 bindings.
-6. Cuenca nival CAMELS-CL para probar la rutina de nieve de HBV con tmean_cr2met.
+5. ~~Cuenca nival CAMELS-CL~~ ✅ (4511002 Las Ramadas + 4703002 Cuncumén: rutina
+   nival sube NSE val de ≤0.23 a 0.31–0.62; TT/SFCF calibran alto por temperatura
+   agregada en cuencas de alto relieve → motiva bandas de elevación en v0.2).
+6. SCE-UA; CI GitHub Actions; LICENSE files; PyO3 bindings.
+7. v0.2: bandas de elevación / semi-distribuido (caso de uso directo: Norte Chico).
 5. Caso interesante para el paper: 8123001 muestra equifinalidad + no-estacionariedad
    (megasequía post-2010) — benchmark para calibración por gradiente/regularizada.

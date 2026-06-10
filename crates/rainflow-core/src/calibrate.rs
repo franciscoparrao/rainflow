@@ -308,10 +308,14 @@ pub fn hbv_default_bounds<F: Float>(with_snow: bool) -> Vec<(F, F)> {
     let lit = |v: f64| F::from(v).expect("f64 literal must be representable in F");
     let mut bounds = Vec::new();
     if with_snow {
+        // TT and SFCF ranges are wider than the HBV-light convention
+        // (±2.5 °C, 0.4–1.4): with lumped catchment-mean temperature over
+        // high-relief Andean basins the effective rain/snow threshold rises,
+        // and SFCF must compensate gauge/product undercatch at altitude.
         bounds.extend([
-            (lit(-2.5), lit(2.5)), // TT
+            (lit(-3.0), lit(4.0)), // TT
             (lit(0.5), lit(10.0)), // CFMAX
-            (lit(0.4), lit(1.4)),  // SFCF
+            (lit(0.4), lit(2.0)),  // SFCF
         ]);
     }
     bounds.extend([

@@ -22,7 +22,9 @@ pronóstico operacional y corridas masivas. Hoy: airGR/HBV (R), TUWmodel.
       en L0123001, parámetros casi idénticos). Falta SCE-UA.
 - [x] Métricas: NSE, KGE (+componentes), logNSE, PBIAS.
 - [x] Forzantes: series de precipitación/PET (CSV) vía CLI.
-- [ ] Validación split-sample.
+- [x] Validación split-sample (`rainflow split-sample`) sobre 2 cuencas CAMELS-CL
+      pluviales casi naturales (8123001 Itata en Cholguán, 7330001 Perquilauquén
+      en San Manuel): KGE validación 0.76–0.82. Ver `data/camels-cl/README.md`.
 - [ ] (v0.2) Semi-distribuido por subcuencas; aporte nival (ver `snowmelt-rs`).
 
 ## Arquitectura tentativa
@@ -50,5 +52,7 @@ gradiente e híbridos física+ML. La investigación del método vive en
 ## Próximos pasos al retomar
 1. ~~Implementar GR4J + NSE/KGE~~ ✅ (paridad airGR verificada).
 2. ~~Añadir DDS y validar calibración contra airGR~~ ✅ (mismo óptimo que Calibration_Michel).
-3. Descargar forzantes CAMELS-CL para 1–2 cuencas BNA y correr split-sample.
+3. ~~CAMELS-CL + split-sample~~ ✅ (2 cuencas BNA pluviales, KGE val 0.76–0.82).
 4. HBV-light; luego definir formato de subcuencas para el paso semi-distribuido.
+5. Caso interesante para el paper: 8123001 muestra equifinalidad + no-estacionariedad
+   (megasequía post-2010) — benchmark para calibración por gradiente/regularizada.

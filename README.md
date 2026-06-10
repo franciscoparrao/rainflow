@@ -19,9 +19,11 @@ multi-catchment runs.
       On the L0123001 catchment it converges to the same optimum as
       `airGR::Calibration_Michel` (NSE 0.7956 vs 0.7957, near-identical
       parameters; 2,000 evaluations over 29 years of daily data in ~3 s)
+- [x] **Split-sample validation on CAMELS-CL**: two near-natural pluvial
+      catchments (Río Itata en Cholguán, Río Perquilauquén en San Manuel,
+      1979–2016). Validation KGE 0.76–0.82 — see `data/camels-cl/README.md`
 - [ ] HBV-light core
 - [ ] SCE-UA
-- [ ] Split-sample validation; CAMELS-CL cases
 - [ ] Semi-distributed mode (subcatchments) + snow module (v0.2)
 
 ## Layout

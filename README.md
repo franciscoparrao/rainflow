@@ -15,8 +15,12 @@ multi-catchment runs.
 - [x] CSV forcing + CLI runner
 - [x] **Numerical parity with airGR**: max abs diff 6e-7 mm over 10,593 daily
       steps of the L0123001 example catchment (CSV round-off level)
+- [x] Calibration: **DDS** (Tolson & Shoemaker 2007), deterministic per seed.
+      On the L0123001 catchment it converges to the same optimum as
+      `airGR::Calibration_Michel` (NSE 0.7956 vs 0.7957, near-identical
+      parameters; 2,000 evaluations over 29 years of daily data in ~3 s)
 - [ ] HBV-light core
-- [ ] Calibration: DDS, SCE-UA
+- [ ] SCE-UA
 - [ ] Split-sample validation; CAMELS-CL cases
 - [ ] Semi-distributed mode (subcatchments) + snow module (v0.2)
 
@@ -35,6 +39,11 @@ cargo build --release
     --forcing data/example.csv \
     --x1 350 --x2 -1.5 --x3 90 --x4 1.7 \
     --warmup 365 --output qsim.csv
+
+# Automatic calibration (requires a qobs column)
+./target/release/rainflow calibrate \
+    --forcing data/example.csv \
+    --objective kge --iterations 2000 --seed 42
 ```
 
 The forcing CSV needs columns (flexible, case-insensitive names):

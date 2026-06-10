@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser};
+use rainflow_core::calibrate::{self, DdsConfig, Objective};
 use rainflow_core::metrics;
 use rainflow_core::{Gr4j, Gr4jParams};
 
@@ -16,6 +17,31 @@ use rainflow_core::{Gr4j, Gr4jParams};
 enum Cli {
     /// Run GR4J over a CSV forcing file and report goodness-of-fit metrics.
     Run(RunArgs),
+    /// Calibrate GR4J with DDS against observed discharge.
+    Calibrate(CalibrateArgs),
+}
+
+#[derive(Args)]
+struct CalibrateArgs {
+    /// CSV with columns: date, precipitation, PET, qobs (mm)
+    #[arg(long)]
+    forcing: PathBuf,
+
+    /// Objective to maximize
+    #[arg(long, value_parser = ["nse", "kge", "lognse"], default_value = "nse")]
+    objective: String,
+
+    /// DDS evaluation budget
+    #[arg(long, default_value_t = 2000)]
+    iterations: usize,
+
+    /// RNG seed (same seed => same result)
+    #[arg(long, default_value_t = 42)]
+    seed: u64,
+
+    /// Warm-up steps excluded from the objective
+    #[arg(long, default_value_t = 365)]
+    warmup: usize,
 }
 
 #[derive(Args)]
@@ -49,7 +75,59 @@ struct RunArgs {
 fn main() -> Result<()> {
     match Cli::parse() {
         Cli::Run(args) => run(args),
+        Cli::Calibrate(args) => calibrate(args),
     }
+}
+
+fn calibrate(args: CalibrateArgs) -> Result<()> {
+    let forcing = forcing::read_csv(&args.forcing)?;
+    let qobs = forcing
+        .qobs
+        .as_deref()
+        .context("calibration requires an observed discharge column (qobs)")?;
+
+    let objective = match args.objective.as_str() {
+        "nse" => Objective::Nse,
+        "kge" => Objective::Kge,
+        "lognse" => Objective::LogNse,
+        other => anyhow::bail!("unknown objective {other:?}"),
+    };
+    let config = DdsConfig {
+        max_iter: args.iterations,
+        seed: args.seed,
+        ..Default::default()
+    };
+
+    let cal = calibrate::calibrate_gr4j(
+        &forcing.precip,
+        &forcing.pet,
+        qobs,
+        args.warmup,
+        objective,
+        &calibrate::gr4j_default_bounds(),
+        &config,
+    )?;
+
+    println!(
+        "DDS calibration ({} evaluations, seed {}, warm-up {})",
+        cal.evaluations, args.seed, args.warmup
+    );
+    println!(
+        "  best params: x1={:.3} x2={:.3} x3={:.3} x4={:.3}",
+        cal.params.x1, cal.params.x2, cal.params.x3, cal.params.x4
+    );
+    println!("  best {:>6}: {:.4}", args.objective, cal.value);
+
+    // Report the full metric suite at the optimum.
+    let model = Gr4j::new(cal.params)?;
+    let qsim = model.run(&forcing.precip, &forcing.pet)?;
+    let obs = &qobs[args.warmup..];
+    let sim = &qsim[args.warmup..];
+    print_metric("NSE", metrics::nse(obs, sim));
+    print_metric("KGE", metrics::kge(obs, sim));
+    print_metric("logNSE", metrics::log_nse(obs, sim));
+    print_metric("PBIAS%", metrics::pbias(obs, sim));
+    Ok(())
 }
 
 fn run(args: RunArgs) -> Result<()> {

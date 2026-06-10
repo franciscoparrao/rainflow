@@ -18,7 +18,8 @@ pronóstico operacional y corridas masivas. Hoy: airGR/HBV (R), TUWmodel.
 ## Alcance MVP (v0.1)
 - [x] GR4J (núcleo conceptual, genérico sobre `Float` — autodiff-first).
 - [ ] HBV-light.
-- [ ] Calibración: SCE-UA y DDS.
+- [x] Calibración: DDS (validada vs `airGR::Calibration_Michel`: NSE 0.7956 vs 0.7957
+      en L0123001, parámetros casi idénticos). Falta SCE-UA.
 - [x] Métricas: NSE, KGE (+componentes), logNSE, PBIAS.
 - [x] Forzantes: series de precipitación/PET (CSV) vía CLI.
 - [ ] Validación split-sample.
@@ -47,7 +48,7 @@ gradiente e híbridos física+ML. La investigación del método vive en
 **PyO3**. Alimenta `nowcast` y `snowmelt-rs` como forzantes.
 
 ## Próximos pasos al retomar
-1. ~~Implementar GR4J + NSE/KGE~~ ✅ (paridad airGR verificada; falta correr una cuenca CAMELS-CL real).
-2. Añadir DDS y validar calibración contra airGR (`airGR::Calibration_Michel`).
+1. ~~Implementar GR4J + NSE/KGE~~ ✅ (paridad airGR verificada).
+2. ~~Añadir DDS y validar calibración contra airGR~~ ✅ (mismo óptimo que Calibration_Michel).
 3. Descargar forzantes CAMELS-CL para 1–2 cuencas BNA y correr split-sample.
 4. HBV-light; luego definir formato de subcuencas para el paso semi-distribuido.

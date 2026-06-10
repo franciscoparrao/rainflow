@@ -12,9 +12,11 @@
 //! - **Numerical parity**: GR4J follows Perrin et al. (2003) and is cross-checked
 //!   against the airGR reference implementation.
 
+pub mod calibrate;
 pub mod error;
 pub mod gr4j;
 pub mod metrics;
 
+pub use calibrate::{DdsConfig, Objective, calibrate_gr4j, dds_maximize};
 pub use error::Error;
 pub use gr4j::{Gr4j, Gr4jParams, Gr4jState};

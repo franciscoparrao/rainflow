@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser};
-use rainflow_core::calibrate::{self, DdsConfig, Objective};
+use rainflow_core::calibrate::{self, DdsConfig, Objective, Optimizer, SceConfig};
 use rainflow_core::metrics;
 use rainflow_core::{ElevationBand, ElevationBands, Gr4j, Gr4jParams, Hbv, HbvBands};
 
@@ -48,7 +48,15 @@ struct CalibrateArgs {
     #[arg(long, value_parser = ["nse", "kge", "lognse"], default_value = "nse")]
     objective: String,
 
-    /// DDS evaluation budget
+    /// Optimization algorithm
+    #[arg(long, value_parser = ["dds", "sce"], default_value = "dds")]
+    algorithm: String,
+
+    /// Number of SCE-UA complexes (sce only)
+    #[arg(long, default_value_t = 4)]
+    complexes: usize,
+
+    /// Objective-evaluation budget
     #[arg(long, default_value_t = 2000)]
     iterations: usize,
 
@@ -59,6 +67,23 @@ struct CalibrateArgs {
     /// Warm-up steps excluded from the objective
     #[arg(long, default_value_t = 365)]
     warmup: usize,
+}
+
+impl CalibrateArgs {
+    fn optimizer(&self) -> Optimizer {
+        match self.algorithm.as_str() {
+            "sce" => Optimizer::Sce(SceConfig {
+                complexes: self.complexes,
+                max_iter: self.iterations,
+                seed: self.seed,
+            }),
+            _ => Optimizer::Dds(DdsConfig {
+                max_iter: self.iterations,
+                seed: self.seed,
+                ..Default::default()
+            }),
+        }
+    }
 }
 
 #[derive(Args)]
@@ -112,11 +137,7 @@ fn split_sample(args: CalibrateArgs) -> Result<()> {
     );
 
     let objective = parse_objective(&args.objective)?;
-    let config = DdsConfig {
-        max_iter: args.iterations,
-        seed: args.seed,
-        ..Default::default()
-    };
+    let optimizer = args.optimizer();
     let mid = n / 2;
     let bands = parse_bands(&args)?;
 
@@ -143,8 +164,8 @@ fn split_sample(args: CalibrateArgs) -> Result<()> {
     ];
 
     println!(
-        "Split-sample test of {} ({} steps, split at {mid}, objective {}, {} evaluations)",
-        args.model, n, args.objective, args.iterations
+        "Split-sample test of {} ({} steps, split at {mid}, {} objective {}, {} evaluations)",
+        args.model, n, args.algorithm, args.objective, args.iterations
     );
     for (cal_name, val_name, cal_obs, val_obs) in &halves {
         let cal = calibrate_dispatch(
@@ -153,7 +174,7 @@ fn split_sample(args: CalibrateArgs) -> Result<()> {
             cal_obs,
             args.warmup,
             objective,
-            &config,
+            &optimizer,
             bands.as_ref(),
         )?;
         let val = objective_value(objective, &val_obs[args.warmup..], &cal.qsim[args.warmup..]);
@@ -182,7 +203,7 @@ fn calibrate_dispatch(
     qobs: &[f64],
     warmup: usize,
     objective: Objective,
-    config: &DdsConfig,
+    optimizer: &Optimizer,
     bands_config: Option<&ElevationBands<f64>>,
 ) -> Result<CalOutcome> {
     match model {
@@ -194,7 +215,7 @@ fn calibrate_dispatch(
                 warmup,
                 objective,
                 &calibrate::gr4j_default_bounds(),
-                config,
+                optimizer,
             )?;
             let qsim = Gr4j::new(cal.params)?.run(&forcing.precip, &forcing.pet)?;
             let p = cal.params;
@@ -217,7 +238,7 @@ fn calibrate_dispatch(
                 qobs,
                 warmup,
                 objective,
-                config,
+                optimizer,
             )?;
             let qsim = Hbv::new(cal.params)?.run(&forcing.precip, &forcing.pet, temp)?;
             let p = cal.params;
@@ -251,9 +272,10 @@ fn calibrate_dispatch(
                 qobs,
                 warmup,
                 objective,
-                config,
+                optimizer,
             )?;
-            let qsim = HbvBands::new(cal.params, ebands.clone())?.run(
+            // cal.bands carries the fitted TCALT/PCALT; re-simulate with them.
+            let qsim = HbvBands::new(cal.params, cal.bands.clone())?.run(
                 &forcing.precip,
                 &forcing.pet,
                 temp,
@@ -263,9 +285,12 @@ fn calibrate_dispatch(
                 value: cal.value,
                 evaluations: cal.evaluations,
                 desc: format!(
-                    "{} bands | tt={:.2} cfmax={:.2} sfcf={:.2} fc={:.0} lp={:.2} beta={:.2} \
-                     k0={:.3} k1={:.3} k2={:.4} uzl={:.1} perc={:.2} maxbas={:.2}",
-                    ebands.bands.len(),
+                    "{} bands | tcalt={:.2} pcalt={:.3} | tt={:.2} cfmax={:.2} sfcf={:.2} \
+                     fc={:.0} lp={:.2} beta={:.2} k0={:.3} k1={:.3} k2={:.4} uzl={:.1} \
+                     perc={:.2} maxbas={:.2}",
+                    cal.bands.bands.len(),
+                    cal.bands.tcalt,
+                    cal.bands.pcalt,
                     p.tt,
                     p.cfmax,
                     p.sfcf,
@@ -339,11 +364,7 @@ fn calibrate(args: CalibrateArgs) -> Result<()> {
         .context("calibration requires an observed discharge column (qobs)")?;
 
     let objective = parse_objective(&args.objective)?;
-    let config = DdsConfig {
-        max_iter: args.iterations,
-        seed: args.seed,
-        ..Default::default()
-    };
+    let optimizer = args.optimizer();
 
     let bands = parse_bands(&args)?;
     let cal = calibrate_dispatch(
@@ -352,13 +373,17 @@ fn calibrate(args: CalibrateArgs) -> Result<()> {
         qobs,
         args.warmup,
         objective,
-        &config,
+        &optimizer,
         bands.as_ref(),
     )?;
 
     println!(
-        "DDS calibration of {} ({} evaluations, seed {}, warm-up {})",
-        args.model, cal.evaluations, args.seed, args.warmup
+        "{} calibration of {} ({} evaluations, seed {}, warm-up {})",
+        args.algorithm.to_uppercase(),
+        args.model,
+        cal.evaluations,
+        args.seed,
+        args.warmup
     );
     println!("  best params: {}", cal.desc);
     println!("  best {:>6}: {:.4}", args.objective, cal.value);

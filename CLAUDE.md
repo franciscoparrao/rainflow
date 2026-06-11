@@ -19,8 +19,8 @@ pronóstico operacional y corridas masivas. Hoy: airGR/HBV (R), TUWmodel.
 - [x] GR4J (núcleo conceptual, genérico sobre `Float` — autodiff-first).
 - [x] HBV-light (rutina nival grado-día con temperatura opcional; en las cuencas
       CAMELS-CL pluviales supera a GR4J: NSE val 0.73–0.77 vs 0.64–0.74).
-- [x] Calibración: DDS (validada vs `airGR::Calibration_Michel`: NSE 0.7956 vs 0.7957
-      en L0123001, parámetros casi idénticos). Falta SCE-UA.
+- [x] Calibración: DDS (validada vs `airGR::Calibration_Michel`: NSE 0.7956 vs 0.7957)
+      y SCE-UA (Duan et al. 1992); seleccionables con `--algorithm dds|sce`.
 - [x] Métricas: NSE, KGE (+componentes), logNSE, PBIAS.
 - [x] Forzantes: series de precipitación/PET (CSV) vía CLI.
 - [x] Validación split-sample (`rainflow split-sample`) sobre 2 cuencas CAMELS-CL
@@ -62,8 +62,11 @@ gradiente e híbridos física+ML. La investigación del método vive en
 6. ~~Bandas de elevación / semi-distribuido~~ ✅ (`--model hbv-bands`: nieve+suelo
    por banda con TCALT/PCALT, respuesta y ruteo compartidos; 1 banda = modelo
    agregado exacto. En Las Ramadas TT vuelve a ~0°C físico y NSE val 0.33→0.51).
-7. Próximo refinamiento de bandas: geometría desde curva hipsométrica real +
-   calibrar/regionalizar TCALT/PCALT (hoy fijos en defaults HBV-light).
-8. SCE-UA; CI GitHub Actions; LICENSE files; PyO3 bindings.
+7. ~~SCE-UA~~ ✅ (Duan et al. 1992; concuerda con DDS en GR4J salvo redondeo).
+8. ~~Calibrar TCALT/PCALT en bandas~~ ✅ (arregló 4703002: val NSE 0.23→0.76 con
+   lapse calibrado; bandas ahora superan al agregado de forma robusta).
+9. Próximo refinamiento de bandas: geometría desde curva hipsométrica real
+   (requiere DEM por cuenca); hoy se usan bandas equi-área.
+10. CI GitHub Actions; LICENSE files; PyO3 bindings.
 5. Caso interesante para el paper: 8123001 muestra equifinalidad + no-estacionariedad
    (megasequía post-2010) — benchmark para calibración por gradiente/regularizada.

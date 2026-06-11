@@ -19,10 +19,11 @@ multi-catchment runs.
 - [x] CSV forcing + CLI runner
 - [x] **Numerical parity with airGR**: max abs diff 6e-7 mm over 10,593 daily
       steps of the L0123001 example catchment (CSV round-off level)
-- [x] Calibration: **DDS** (Tolson & Shoemaker 2007), deterministic per seed.
-      On the L0123001 catchment it converges to the same optimum as
-      `airGR::Calibration_Michel` (NSE 0.7956 vs 0.7957, near-identical
-      parameters; 2,000 evaluations over 29 years of daily data in ~3 s)
+- [x] Calibration: **DDS** (Tolson & Shoemaker 2007) and **SCE-UA** (Duan et
+      al. 1992), both deterministic per seed and selectable per run. DDS on the
+      L0123001 catchment converges to the same optimum as
+      `airGR::Calibration_Michel` (NSE 0.7956 vs 0.7957); DDS and SCE-UA agree
+      to within rounding on the GR4J optima
 - [x] **Split-sample validation on CAMELS-CL**: two near-natural pluvial
       catchments (Río Itata en Cholguán, Río Perquilauquén en San Manuel,
       1979–2016). Validation KGE 0.76–0.82 — see `data/camels-cl/README.md`
@@ -34,11 +35,12 @@ multi-catchment runs.
 - [x] **Semi-distributed HBV with elevation bands** (`--model hbv-bands`):
       per-band snow + soil with temperature lapse (TCALT) and precipitation
       gradient (PCALT), shared response and routing. Single band at the
-      reference elevation reproduces the lumped model exactly. On Río Grande
-      en Las Ramadas the bands let TT calibrate back to ~0 °C (physical) and
-      lift validation NSE 0.33 → 0.51 — see `data/camels-cl/README.md`
-- [ ] SCE-UA
-- [ ] Semi-distributed mode (subcatchments) + snow module (v0.2)
+      reference elevation reproduces the lumped model exactly. With the lapse
+      rates calibrated, the bands beat the lumped model robustly on Río Choapa
+      en Cuncumén (validation NSE 0.63–0.76 vs 0.34–0.62) — see
+      `data/camels-cl/README.md`
+- [ ] Band geometry from real hypsometric curves (needs per-catchment DEM)
+- [ ] PyO3 Python bindings; CI; subcatchment routing
 
 ## Layout
 

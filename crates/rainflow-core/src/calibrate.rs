@@ -1,13 +1,17 @@
 //! Automatic calibration.
 //!
-//! Currently implements DDS — Dynamically Dimensioned Search (Tolson &
-//! Shoemaker 2007, Water Resources Research 43, W01413): a single-objective,
-//! greedy stochastic search that scales the number of perturbed dimensions
-//! down as the iteration budget is consumed. Parsimonious and well suited to
-//! conceptual rainfall–runoff models.
+//! Two single-objective global optimizers, selectable through [`Optimizer`]:
 //!
-//! The search is fully deterministic for a given seed (own SplitMix64 RNG, no
-//! external randomness), which keeps calibration runs reproducible.
+//! - **DDS** — Dynamically Dimensioned Search (Tolson & Shoemaker 2007, WRR 43,
+//!   W01413): a greedy search that scales the number of perturbed dimensions
+//!   down as the budget is consumed. Parsimonious, few control parameters.
+//! - **SCE-UA** — Shuffled Complex Evolution (Duan et al. 1992, WRR 28,
+//!   1015–1031): a population of complexes evolved by competitive complex
+//!   evolution and periodically shuffled. More robust on multimodal surfaces,
+//!   at a higher evaluation cost.
+//!
+//! Both use the same internal SplitMix64 RNG (no external randomness), so a
+//! calibration run is fully reproducible for a given seed.
 
 use num_traits::Float;
 
@@ -197,6 +201,251 @@ fn perturb<F: Float>(x: F, lo: F, up: F, r: f64, rng: &mut SplitMix64) -> F {
     xn
 }
 
+/// SCE-UA configuration (Shuffled Complex Evolution; Duan et al. 1992).
+#[derive(Debug, Clone, Copy)]
+pub struct SceConfig {
+    /// Number of complexes `p`, >= 1. More complexes = more global, slower.
+    pub complexes: usize,
+    /// Total objective-evaluation budget (>= initial population size).
+    pub max_iter: usize,
+    /// RNG seed; same seed + same inputs => same result.
+    pub seed: u64,
+}
+
+impl Default for SceConfig {
+    fn default() -> Self {
+        Self {
+            complexes: 4,
+            max_iter: 10_000,
+            seed: 42,
+        }
+    }
+}
+
+/// A single optimization run, shared by both algorithms.
+#[derive(Debug, Clone, Copy)]
+pub enum Optimizer {
+    Dds(DdsConfig),
+    Sce(SceConfig),
+}
+
+impl Optimizer {
+    /// Maximizes `objective` within `bounds` with the chosen algorithm.
+    pub fn maximize<F: Float>(
+        &self,
+        bounds: &[(F, F)],
+        objective: impl FnMut(&[F]) -> F,
+    ) -> Result<DdsResult<F>, Error> {
+        match self {
+            Optimizer::Dds(c) => dds_maximize(bounds, None, c, objective),
+            Optimizer::Sce(c) => sce_maximize(bounds, c, objective),
+        }
+    }
+}
+
+/// Maximizes `objective` within `bounds` using SCE-UA (Duan, Sorooshian &
+/// Gupta 1992, Water Resources Research 28, 1015–1031): a robust global
+/// optimizer that partitions a random population into complexes, evolves each
+/// by competitive complex evolution (a reflection/contraction simplex), then
+/// shuffles. Deterministic for a given seed.
+///
+/// Non-finite objective values are treated as the worst possible (rejected),
+/// so degenerate parameter combinations are tolerated. The budget `max_iter`
+/// counts objective evaluations, like [`dds_maximize`].
+pub fn sce_maximize<F: Float>(
+    bounds: &[(F, F)],
+    config: &SceConfig,
+    mut objective: impl FnMut(&[F]) -> F,
+) -> Result<DdsResult<F>, Error> {
+    let n = bounds.len();
+    if n == 0 {
+        return Err(Error::InvalidParameter {
+            name: "bounds",
+            reason: "at least one parameter is required".into(),
+        });
+    }
+    for (i, &(lo, up)) in bounds.iter().enumerate() {
+        if lo.partial_cmp(&up) != Some(std::cmp::Ordering::Less) {
+            return Err(Error::InvalidParameter {
+                name: "bounds",
+                reason: format!("dimension {i}: lower bound must be < upper bound"),
+            });
+        }
+    }
+    if config.complexes == 0 {
+        return Err(Error::InvalidParameter {
+            name: "complexes",
+            reason: "need at least one complex".into(),
+        });
+    }
+
+    // Standard SCE-UA complex geometry (Duan et al. 1992).
+    let m = 2 * n + 1; // points per complex
+    let q = n + 1; // points per sub-complex (simplex)
+    let beta = m; // evolution steps per complex per shuffle
+    let pop_size = config.complexes * m;
+    if config.max_iter < pop_size {
+        return Err(Error::InvalidParameter {
+            name: "max_iter",
+            reason: format!("budget must be >= initial population size ({pop_size})"),
+        });
+    }
+
+    let mut rng = SplitMix64::new(config.seed);
+    let lit = |v: f64| F::from(v).expect("f64 literal must be representable in F");
+    // Minimize -objective; rejected (non-finite) candidates score +inf.
+    let inf = F::infinity();
+    let mut eval = |x: &[F], objective: &mut dyn FnMut(&[F]) -> F| -> F {
+        let v = objective(x);
+        if v.is_finite() { -v } else { inf }
+    };
+
+    let sample = |rng: &mut SplitMix64| -> Vec<F> {
+        bounds
+            .iter()
+            .map(|&(lo, up)| lo + (up - lo) * lit(rng.uniform()))
+            .collect()
+    };
+
+    // Initial population (each entry: parameter vector + its score).
+    let mut pop: Vec<(Vec<F>, F)> = Vec::with_capacity(pop_size);
+    for _ in 0..pop_size {
+        let x = sample(&mut rng);
+        let f = eval(&x, &mut objective);
+        pop.push((x, f));
+    }
+    let mut evaluations = pop_size;
+
+    let cmp = |a: &(Vec<F>, F), b: &(Vec<F>, F)| {
+        a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
+    };
+
+    while evaluations < config.max_iter {
+        pop.sort_by(cmp);
+
+        // Partition the rank-sorted population into p complexes round-robin.
+        for k in 0..config.complexes {
+            let mut complex: Vec<(Vec<F>, F)> = (0..m)
+                .map(|j| pop[k + j * config.complexes].clone())
+                .collect();
+
+            // Competitive Complex Evolution: evolve the complex `beta` times.
+            for _ in 0..beta {
+                if evaluations >= config.max_iter {
+                    break;
+                }
+                complex.sort_by(cmp);
+                // Triangular selection: bias parents toward better points.
+                let parents = triangular_subset(m, q, &mut rng);
+                let worst_idx = *parents.last().unwrap();
+
+                // Centroid of the q-1 best parents (exclude the worst).
+                let mut centroid = vec![F::zero(); n];
+                for &pi in &parents[..q - 1] {
+                    for d in 0..n {
+                        centroid[d] = centroid[d] + complex[pi].0[d];
+                    }
+                }
+                let qm1 = lit((q - 1) as f64);
+                for c in &mut centroid {
+                    *c = *c / qm1;
+                }
+
+                // Reflection of the worst through the centroid.
+                let worst = complex[worst_idx].0.clone();
+                let mut trial: Vec<F> = (0..n)
+                    .map(|d| centroid[d] + (centroid[d] - worst[d]))
+                    .collect();
+                let in_bounds = trial
+                    .iter()
+                    .zip(bounds)
+                    .all(|(&v, &(lo, up))| v >= lo && v <= up);
+
+                let mut tf;
+                if in_bounds {
+                    tf = eval(&trial, &mut objective);
+                    evaluations += 1;
+                    if tf >= complex[worst_idx].1 {
+                        // Reflection failed: try contraction toward centroid.
+                        let half = lit(0.5);
+                        trial = (0..n).map(|d| (centroid[d] + worst[d]) * half).collect();
+                        tf = eval(&trial, &mut objective);
+                        evaluations += 1;
+                        if tf >= complex[worst_idx].1 {
+                            // Contraction failed too: random mutation in hull.
+                            trial = sample_in_hull(&complex, bounds, &mut rng);
+                            tf = eval(&trial, &mut objective);
+                            evaluations += 1;
+                        }
+                    }
+                } else {
+                    // Out of bounds: random mutation in the complex's hull.
+                    trial = sample_in_hull(&complex, bounds, &mut rng);
+                    tf = eval(&trial, &mut objective);
+                    evaluations += 1;
+                }
+
+                complex[worst_idx] = (trial, tf);
+            }
+
+            // Shuffle the evolved complex back into the population.
+            for (j, point) in complex.into_iter().enumerate() {
+                pop[k + j * config.complexes] = point;
+            }
+        }
+    }
+
+    pop.sort_by(cmp);
+    let best = &pop[0];
+    Ok(DdsResult {
+        params: best.0.clone(),
+        value: -best.1, // back to maximization sense
+        evaluations,
+    })
+}
+
+/// Picks `q` distinct indices from `0..m` with a triangular probability that
+/// favors lower (better, since the complex is rank-sorted) indices, returned
+/// sorted ascending (Duan et al. 1992, eq. for the trapezoidal distribution).
+fn triangular_subset(m: usize, q: usize, rng: &mut SplitMix64) -> Vec<usize> {
+    let mut chosen = Vec::with_capacity(q);
+    let mf = m as f64;
+    while chosen.len() < q {
+        // P(i) = 2(m+1-i-1)/(m(m+1)); inverse-CDF sampling on rank.
+        let u = rng.uniform();
+        let idx = ((mf + 0.5) - ((mf + 0.5).powi(2) - mf * (mf + 1.0) * u).sqrt()) as usize;
+        let idx = idx.min(m - 1);
+        if !chosen.contains(&idx) {
+            chosen.push(idx);
+        }
+    }
+    chosen.sort_unstable();
+    chosen
+}
+
+/// Uniform sample inside the smallest axis-aligned box containing the complex,
+/// clamped to the global bounds (SCE-UA's mutation step).
+fn sample_in_hull<F: Float>(
+    complex: &[(Vec<F>, F)],
+    bounds: &[(F, F)],
+    rng: &mut SplitMix64,
+) -> Vec<F> {
+    let lit = |v: f64| F::from(v).expect("f64 literal must be representable in F");
+    let n = bounds.len();
+    (0..n)
+        .map(|d| {
+            let mut lo = complex[0].0[d];
+            let mut hi = lo;
+            for point in complex {
+                lo = lo.min(point.0[d]);
+                hi = hi.max(point.0[d]);
+            }
+            let v = lo + (hi - lo) * lit(rng.uniform());
+            v.max(bounds[d].0).min(bounds[d].1)
+        })
+        .collect()
+}
+
 /// Calibration objective for GR4J.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Objective {
@@ -245,7 +494,7 @@ pub fn calibrate_gr4j<F: Float>(
     warmup: usize,
     objective: Objective,
     bounds: &[(F, F); 4],
-    config: &DdsConfig,
+    optimizer: &Optimizer,
 ) -> Result<Gr4jCalibration<F>, Error> {
     if precip.len() != pet.len() {
         return Err(Error::ForcingLengthMismatch {
@@ -270,7 +519,7 @@ pub fn calibrate_gr4j<F: Float>(
     }
 
     let nan = F::nan();
-    let result = dds_maximize(bounds, None, config, |x| {
+    let result = optimizer.maximize(bounds, |x| {
         let Ok(model) = Gr4j::new(Gr4jParams {
             x1: x[0],
             x2: x[1],
@@ -333,6 +582,16 @@ pub fn hbv_default_bounds<F: Float>(with_snow: bool) -> Vec<(F, F)> {
     bounds
 }
 
+/// Bounds for the two lapse parameters appended when calibrating
+/// [`HbvBands`]: TCALT (°C/100 m) and PCALT (fraction/100 m).
+fn lapse_bounds<F: Float>() -> [(F, F); 2] {
+    let lit = |v: f64| F::from(v).expect("f64 literal must be representable in F");
+    [
+        (lit(0.0), lit(1.2)),  // TCALT — environmental lapse rate range
+        (lit(0.0), lit(0.30)), // PCALT — precipitation gradient
+    ]
+}
+
 fn hbv_params_from_vector<F: Float>(x: &[F], with_snow: bool) -> HbvParams<F> {
     let lit = |v: f64| F::from(v).expect("f64 literal must be representable in F");
     let (snow, rest) = if with_snow {
@@ -378,7 +637,7 @@ pub fn calibrate_hbv<F: Float>(
     qobs: &[F],
     warmup: usize,
     objective: Objective,
-    config: &DdsConfig,
+    optimizer: &Optimizer,
 ) -> Result<HbvCalibration<F>, Error> {
     if precip.len() != pet.len() {
         return Err(Error::ForcingLengthMismatch {
@@ -405,7 +664,7 @@ pub fn calibrate_hbv<F: Float>(
     let with_snow = temp.is_some();
     let bounds = hbv_default_bounds::<F>(with_snow);
     let nan = F::nan();
-    let result = dds_maximize(&bounds, None, config, |x| {
+    let result = optimizer.maximize(&bounds, |x| {
         let Ok(model) = Hbv::new(hbv_params_from_vector(x, with_snow)) else {
             return nan;
         };
@@ -424,11 +683,22 @@ pub fn calibrate_hbv<F: Float>(
     })
 }
 
-/// Calibrates the semi-distributed [`HbvBands`] model (temperature required;
-/// the full 12-parameter set including the snow routine is searched). Lapse
-/// rates and band geometry stay fixed at the supplied configuration.
-// One argument more than `calibrate_hbv` (the band configuration); kept as a
-// flat signature to mirror the sibling calibration functions.
+/// Result of a semi-distributed calibration: HBV parameters plus the fitted
+/// lapse rates and the band geometry they apply to.
+#[derive(Debug, Clone)]
+pub struct HbvBandsCalibration<F> {
+    pub params: HbvParams<F>,
+    pub bands: ElevationBands<F>,
+    pub value: F,
+    pub evaluations: usize,
+}
+
+/// Calibrates the semi-distributed [`HbvBands`] model (temperature required).
+/// Searches the full 12-parameter HBV set plus the two lapse rates TCALT and
+/// PCALT (14 dimensions); the band geometry (elevations and area fractions)
+/// stays fixed at `bands`, only its lapse rates are overwritten.
+// One argument more than `calibrate_hbv` (the band geometry); kept as a flat
+// signature to mirror the sibling calibration functions.
 #[allow(clippy::too_many_arguments)]
 pub fn calibrate_hbv_bands<F: Float>(
     precip: &[F],
@@ -438,8 +708,8 @@ pub fn calibrate_hbv_bands<F: Float>(
     qobs: &[F],
     warmup: usize,
     objective: Objective,
-    config: &DdsConfig,
-) -> Result<HbvCalibration<F>, Error> {
+    optimizer: &Optimizer,
+) -> Result<HbvBandsCalibration<F>, Error> {
     if precip.len() != pet.len() {
         return Err(Error::ForcingLengthMismatch {
             precip: precip.len(),
@@ -467,10 +737,22 @@ pub fn calibrate_hbv_bands<F: Float>(
         });
     }
 
-    let bounds = hbv_default_bounds::<F>(true);
+    // 12 HBV parameters followed by [TCALT, PCALT].
+    let mut bounds = hbv_default_bounds::<F>(true);
+    bounds.extend_from_slice(&lapse_bounds::<F>());
+    let lapse = bounds.len() - 2;
+
+    // Reuse the supplied geometry, overriding only the lapse rates per trial.
+    let with_lapse = |x: &[F]| -> ElevationBands<F> {
+        let mut b = bands.clone();
+        b.tcalt = x[lapse];
+        b.pcalt = x[lapse + 1];
+        b
+    };
+
     let nan = F::nan();
-    let result = dds_maximize(&bounds, None, config, |x| {
-        let Ok(model) = HbvBands::new(hbv_params_from_vector(x, true), bands.clone()) else {
+    let result = optimizer.maximize(&bounds, |x| {
+        let Ok(model) = HbvBands::new(hbv_params_from_vector(x, true), with_lapse(x)) else {
             return nan;
         };
         let Ok(qsim) = model.run(precip, pet, temp) else {
@@ -481,8 +763,9 @@ pub fn calibrate_hbv_bands<F: Float>(
             .unwrap_or(nan)
     })?;
 
-    Ok(HbvCalibration {
+    Ok(HbvBandsCalibration {
         params: hbv_params_from_vector(&result.params, true),
+        bands: with_lapse(&result.params),
         value: result.value,
         evaluations: result.evaluations,
     })
@@ -573,10 +856,10 @@ mod tests {
         let (p, pet) = synthetic_forcing(1500);
         let qobs = truth.run(&p, &pet).unwrap();
 
-        let config = DdsConfig {
+        let opt = Optimizer::Dds(DdsConfig {
             max_iter: 1500,
             ..Default::default()
-        };
+        });
         let cal = calibrate_gr4j(
             &p,
             &pet,
@@ -584,10 +867,89 @@ mod tests {
             365,
             Objective::Nse,
             &gr4j_default_bounds(),
-            &config,
+            &opt,
         )
         .unwrap();
         assert!(cal.value > 0.95, "calibrated NSE too low: {}", cal.value);
+    }
+
+    #[test]
+    fn sce_finds_the_sphere_optimum() {
+        // Same surface as the DDS test; SCE-UA should also locate (3, -1).
+        let bounds = [(-10.0, 10.0), (-10.0, 10.0)];
+        let config = SceConfig {
+            complexes: 3,
+            max_iter: 3000,
+            seed: 42,
+        };
+        let res = sce_maximize(&bounds, &config, |x| {
+            -(x[0] - 3.0).powi(2) - (x[1] + 1.0).powi(2)
+        })
+        .unwrap();
+        assert!(res.value > -1e-2, "objective {}", res.value);
+        assert!((res.params[0] - 3.0).abs() < 0.1);
+        assert!((res.params[1] + 1.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn sce_is_reproducible_and_respects_bounds() {
+        let bounds = [(0.0, 1.0), (10.0, 20.0), (-5.0, 5.0)];
+        let config = SceConfig::default();
+        let f = |x: &[f64]| {
+            assert!((0.0..=1.0).contains(&x[0]) && (10.0..=20.0).contains(&x[1]));
+            -x.iter().map(|v| v * v).sum::<f64>()
+        };
+        let a = sce_maximize(&bounds, &config, f).unwrap();
+        let b = sce_maximize(&bounds, &config, f).unwrap();
+        assert_eq!(a.params, b.params);
+        assert_eq!(a.value, b.value);
+    }
+
+    #[test]
+    fn sce_rejects_bad_configuration() {
+        let f = |_: &[f64]| 0.0;
+        assert!(sce_maximize(&[], &SceConfig::default(), f).is_err());
+        assert!(sce_maximize(&[(1.0, 0.0)], &SceConfig::default(), f).is_err());
+        // Budget below the initial population must be rejected.
+        let tiny = SceConfig {
+            complexes: 4,
+            max_iter: 5,
+            seed: 1,
+        };
+        assert!(sce_maximize(&[(0.0, 1.0)], &tiny, f).is_err());
+    }
+
+    #[test]
+    fn dds_and_sce_agree_on_gr4j_calibration() {
+        let truth = Gr4j::new(Gr4jParams {
+            x1: 350.0,
+            x2: -1.5,
+            x3: 90.0,
+            x4: 1.7,
+        })
+        .unwrap();
+        let (p, pet) = synthetic_forcing(1500);
+        let qobs = truth.run(&p, &pet).unwrap();
+        let sce = Optimizer::Sce(SceConfig {
+            complexes: 4,
+            max_iter: 4000,
+            seed: 42,
+        });
+        let cal = calibrate_gr4j(
+            &p,
+            &pet,
+            &qobs,
+            365,
+            Objective::Nse,
+            &gr4j_default_bounds(),
+            &sce,
+        )
+        .unwrap();
+        assert!(
+            cal.value > 0.95,
+            "SCE-UA calibrated NSE too low: {}",
+            cal.value
+        );
     }
 
     #[test]
@@ -612,11 +974,11 @@ mod tests {
         let (p, pet) = synthetic_forcing(1500);
         let qobs = truth.run(&p, &pet, None).unwrap();
 
-        let config = DdsConfig {
+        let opt = Optimizer::Dds(DdsConfig {
             max_iter: 2000,
             ..Default::default()
-        };
-        let cal = calibrate_hbv(&p, &pet, None, &qobs, 365, Objective::Nse, &config).unwrap();
+        });
+        let cal = calibrate_hbv(&p, &pet, None, &qobs, 365, Objective::Nse, &opt).unwrap();
         assert!(cal.value > 0.9, "calibrated NSE too low: {}", cal.value);
     }
 

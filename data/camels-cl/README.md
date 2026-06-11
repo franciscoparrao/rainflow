@@ -70,10 +70,27 @@ The headline result is **physical**, not just skill: in 4511002 the bands let
 TT calibrate back to ~0 °C (the defensible rain/snow threshold) instead of the
 3–4 °C the lumped model needed as a fudge for the cold high terrain — and
 validation NSE improves on one fold (0.33 → 0.51). For 4703002 (an enormous
-1153–5038 m relief) three equal bands with default lapse rates are too coarse:
-skill is noisier and TT stays high. Takeaways for the next iteration: derive
-band geometry from the real hypsometric curve, and calibrate (or
-regionalize) TCALT/PCALT rather than fixing them at the HBV-light defaults.
+1153–5038 m relief) three equal bands with default lapse rates are too coarse.
+
+### Calibrating the lapse rates (TCALT, PCALT)
+
+Fixing TCALT/PCALT at the HBV-light defaults wastes the bands on the
+big-relief catchment. Adding the two lapse rates to the search (14-parameter
+DDS) fixes it:
+
+| catchment | configuration | cal A → val B | cal B → val A |
+|---|---|---|---|
+| 4703002 | lumped HBV | 0.794 → 0.616 | 0.721 → 0.344 |
+| 4703002 | 3 bands, fixed lapse | 0.642 → 0.228 | 0.415 → 0.531 |
+| 4703002 | 3 bands, **fitted lapse (DDS)** | 0.867 → **0.756** | 0.799 → **0.628** |
+| 4703002 | 3 bands, fitted lapse (SCE-UA) | 0.817 → 0.680 | 0.805 → 0.660 |
+
+With fitted lapse rates the semi-distributed model finally beats the lumped
+one *robustly* (validation NSE 0.63–0.76 vs 0.34–0.62, and far less spread
+between folds). SCE-UA lands slightly lower peaks but more balanced across
+folds — the signature of a more global optimum. The remaining open item is
+band geometry from the real hypsometric curve (needs a per-catchment DEM);
+equal-area bands are the current placeholder.
 
 Reproduce with:
 

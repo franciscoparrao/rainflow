@@ -20,7 +20,8 @@ pub mod metrics;
 mod uh;
 
 pub use calibrate::{
-    DdsConfig, Objective, calibrate_gr4j, calibrate_hbv, calibrate_hbv_bands, dds_maximize,
+    DdsConfig, Objective, Optimizer, SceConfig, calibrate_gr4j, calibrate_hbv, calibrate_hbv_bands,
+    dds_maximize, sce_maximize,
 };
 pub use error::Error;
 pub use gr4j::{Gr4j, Gr4jParams, Gr4jState};

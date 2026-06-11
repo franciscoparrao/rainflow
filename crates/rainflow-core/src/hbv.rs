@@ -326,6 +326,75 @@ impl<F: Float> ElevationBands<F> {
         }
     }
 
+    /// Builds `n` equal-area bands from a hypsometric curve.
+    ///
+    /// `curve` is the catchment's hypsometry as `(cumulative_area_fraction,
+    /// elevation)` knots, sorted by increasing fraction and spanning at least
+    /// `[0, 1]` (e.g. `[(0, z_min), (0.5, z_median), (1, z_max)]`, or a dense
+    /// curve sampled from a DEM). Each band covers an equal area `1/n`; its
+    /// representative elevation is the curve evaluated at the band's midpoint
+    /// fraction by monotone linear interpolation. Unlike hand-picked or
+    /// equal-elevation bands, the elevations follow where the catchment area
+    /// actually sits.
+    pub fn equal_area_from_hypsometry(
+        curve: &[(F, F)],
+        n: usize,
+        reference_elevation: F,
+    ) -> Result<Self, Error> {
+        if n == 0 {
+            return Err(Error::InvalidParameter {
+                name: "n",
+                reason: "need at least one band".into(),
+            });
+        }
+        if curve.len() < 2 {
+            return Err(Error::InvalidParameter {
+                name: "curve",
+                reason: "hypsometric curve needs at least two knots".into(),
+            });
+        }
+        for w in curve.windows(2) {
+            // Fractions must be non-decreasing; elevations must not decrease
+            // (a hypsometric curve is monotone by construction).
+            if w[1].0 < w[0].0 || w[1].1 < w[0].1 || !w[0].0.is_finite() || !w[0].1.is_finite() {
+                return Err(Error::InvalidParameter {
+                    name: "curve",
+                    reason: "knots must be sorted with non-decreasing fraction and elevation".into(),
+                });
+            }
+        }
+
+        let nf = lit::<F>(n as f64);
+        let bands = (0..n)
+            .map(|i| {
+                // Midpoint of band i's area fraction: (i + 0.5)/n.
+                let frac = (lit::<F>(i as f64) + lit(0.5)) / nf;
+                ElevationBand {
+                    elevation: interpolate_curve(curve, frac),
+                    area_fraction: F::one() / nf,
+                }
+            })
+            .collect();
+        Ok(Self::new(bands, reference_elevation))
+    }
+
+    /// Convenience hypsometry from the three elevation quantiles reported by
+    /// datasets such as CAMELS-CL (minimum, median, maximum). Reconstructs the
+    /// curve `[(0, min), (0.5, median), (1, max)]` and delegates to
+    /// [`Self::equal_area_from_hypsometry`]. The reference elevation defaults
+    /// to the median.
+    ///
+    /// This is the data-poor fallback; a curve sampled from a DEM clipped to
+    /// the catchment is strictly better and plugs into the same constructor.
+    pub fn from_quantiles(min: F, median: F, max: F, n: usize) -> Result<Self, Error> {
+        let curve = [
+            (F::zero(), min),
+            (lit(0.5), median),
+            (F::one(), max),
+        ];
+        Self::equal_area_from_hypsometry(&curve, n, median)
+    }
+
     fn validate(&self) -> Result<(), Error> {
         if self.bands.is_empty() {
             return Err(Error::InvalidParameter {
@@ -473,6 +542,30 @@ impl<F: Float> HbvBands<F> {
             .map(|i| self.step(&mut state, precip[i], temp[i], pet[i]))
             .collect())
     }
+}
+
+/// Linear interpolation of a sorted `(x, y)` curve at `x = at`, clamped to the
+/// curve's endpoints outside its range.
+fn interpolate_curve<F: Float>(curve: &[(F, F)], at: F) -> F {
+    if at <= curve[0].0 {
+        return curve[0].1;
+    }
+    let last = curve.len() - 1;
+    if at >= curve[last].0 {
+        return curve[last].1;
+    }
+    for w in curve.windows(2) {
+        let (x0, y0) = w[0];
+        let (x1, y1) = w[1];
+        if at <= x1 {
+            if x1 == x0 {
+                return y0;
+            }
+            let t = (at - x0) / (x1 - x0);
+            return y0 + t * (y1 - y0);
+        }
+    }
+    curve[last].1
 }
 
 /// Triangular MAXBAS weights from the cumulative S-curve
@@ -724,6 +817,63 @@ mod tests {
             "high band ({max_high} mm) should out-accumulate low band ({max_low} mm)"
         );
         assert!(max_high > 0.0, "no snow accumulated at 3500 m");
+    }
+
+    #[test]
+    fn equal_area_bands_from_quantiles_are_well_formed() {
+        // CAMELS-CL 4703002: min 1153, median 3322, max 5038.
+        let eb = ElevationBands::from_quantiles(1153.0, 3322.0, 5038.0, 3).unwrap();
+        assert_eq!(eb.bands.len(), 3);
+        // Equal area fractions summing to 1.
+        let total: f64 = eb.bands.iter().map(|b| b.area_fraction).sum();
+        assert!((total - 1.0).abs() < 1e-12);
+        for b in &eb.bands {
+            assert!((b.area_fraction - 1.0 / 3.0).abs() < 1e-12);
+        }
+        // Elevations strictly increasing and bracketed by [min, max].
+        assert!(eb.bands[0].elevation < eb.bands[1].elevation);
+        assert!(eb.bands[1].elevation < eb.bands[2].elevation);
+        assert!(eb.bands[0].elevation > 1153.0 && eb.bands[2].elevation < 5038.0);
+        // Reference elevation defaults to the median; middle band (frac 0.5)
+        // sits exactly on it.
+        assert!((eb.reference_elevation - 3322.0).abs() < 1e-12);
+        assert!((eb.bands[1].elevation - 3322.0).abs() < 1e-9);
+        // Resulting config must validate and drive a model.
+        assert!(HbvBands::new(params(), eb).is_ok());
+    }
+
+    #[test]
+    fn hypsometry_single_band_is_the_median() {
+        let eb = ElevationBands::from_quantiles(1000.0, 2000.0, 4000.0, 1).unwrap();
+        assert_eq!(eb.bands.len(), 1);
+        assert!((eb.bands[0].area_fraction - 1.0).abs() < 1e-12);
+        // Midpoint fraction 0.5 -> the median knot.
+        assert!((eb.bands[0].elevation - 2000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn hypsometry_rejects_bad_curves() {
+        assert!(ElevationBands::<f64>::from_quantiles(1000.0, 2000.0, 4000.0, 0).is_err());
+        // Non-monotone elevation.
+        let bad = [(0.0, 1000.0), (0.5, 800.0), (1.0, 2000.0)];
+        assert!(ElevationBands::equal_area_from_hypsometry(&bad, 3, 1500.0).is_err());
+        // Single knot.
+        let one = [(0.0, 1000.0)];
+        assert!(ElevationBands::equal_area_from_hypsometry(&one, 2, 1000.0).is_err());
+    }
+
+    #[test]
+    fn dense_hypsometry_recovers_band_means() {
+        // A linear hypsometry z(f) = 1000 + 2000 f over [0, 1]: equal-area
+        // bands must sit at the midpoint elevations 1000 + 2000*(i+0.5)/n.
+        let curve: Vec<(f64, f64)> = (0..=100)
+            .map(|k| (k as f64 / 100.0, 1000.0 + 2000.0 * (k as f64 / 100.0)))
+            .collect();
+        let eb = ElevationBands::equal_area_from_hypsometry(&curve, 4, 2000.0).unwrap();
+        for (i, b) in eb.bands.iter().enumerate() {
+            let expected = 1000.0 + 2000.0 * (i as f64 + 0.5) / 4.0;
+            assert!((b.elevation - expected).abs() < 1.0, "band {i}: {} vs {expected}", b.elevation);
+        }
     }
 
     #[test]

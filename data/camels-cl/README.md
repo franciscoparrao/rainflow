@@ -88,9 +88,29 @@ DDS) fixes it:
 With fitted lapse rates the semi-distributed model finally beats the lumped
 one *robustly* (validation NSE 0.63–0.76 vs 0.34–0.62, and far less spread
 between folds). SCE-UA lands slightly lower peaks but more balanced across
-folds — the signature of a more global optimum. The remaining open item is
-band geometry from the real hypsometric curve (needs a per-catchment DEM);
-equal-area bands are the current placeholder.
+folds — the signature of a more global optimum.
+
+### Hypsometric (equal-area) band geometry
+
+Hand-picking band elevations is arbitrary. `--hypsometry "min,median,max"`
+builds `n` equal-area bands whose elevations are read off the catchment's
+hypsometric curve (here reconstructed from the three CAMELS-CL elevation
+quantiles; a curve sampled from a DEM clipped to the catchment plugs into the
+same `ElevationBands::equal_area_from_hypsometry`). Five equal-area bands,
+fitted lapse rates:
+
+| catchment | geometry | cal A → val B | cal B → val A |
+|---|---|---|---|
+| 4511002 | 3 bands, hand-picked | 0.543 → 0.322 | 0.785 → 0.393 |
+| 4511002 | 5 bands, hypsometric | 0.534 → **0.430** | 0.787 → **0.441** |
+| 4703002 | 3 bands, hand-picked | 0.867 → 0.756 | 0.799 → 0.628 |
+| 4703002 | 5 bands, hypsometric | 0.891 → 0.738 | 0.800 → 0.648 |
+
+Equal-area hypsometric bands match or beat the hand-tuned geometry (clearly so
+on 4511002, +0.05–0.11 validation NSE) while removing the guesswork — the band
+elevations are now objective and reproducible from reported attributes. The
+reconstruction from three quantiles is coarse; a DEM-derived curve is the
+accuracy ceiling and uses the identical core constructor.
 
 Reproduce with:
 

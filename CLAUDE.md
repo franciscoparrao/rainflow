@@ -65,8 +65,12 @@ gradiente e híbridos física+ML. La investigación del método vive en
 7. ~~SCE-UA~~ ✅ (Duan et al. 1992; concuerda con DDS en GR4J salvo redondeo).
 8. ~~Calibrar TCALT/PCALT en bandas~~ ✅ (arregló 4703002: val NSE 0.23→0.76 con
    lapse calibrado; bandas ahora superan al agregado de forma robusta).
-9. Próximo refinamiento de bandas: geometría desde curva hipsométrica real
-   (requiere DEM por cuenca); hoy se usan bandas equi-área.
-10. CI GitHub Actions; LICENSE files; PyO3 bindings.
+9. ~~Geometría hipsométrica de bandas~~ ✅ (`--hypsometry "min,median,max"`:
+   bandas equi-área con elevación leída de la curva hipsométrica; iguala/supera
+   a las bandas a-ojo, +0.05–0.11 NSE val en 4511002, sin arbitrariedad).
+   El core `equal_area_from_hypsometry` acepta también curva densa de DEM.
+10. Próximo: curva hipsométrica desde DEM recortado por polígono de cuenca
+    (mejora la reconstrucción cruda desde 3 cuantiles).
+11. CI GitHub Actions; LICENSE files; PyO3 bindings.
 5. Caso interesante para el paper: 8123001 muestra equifinalidad + no-estacionariedad
    (megasequía post-2010) — benchmark para calibración por gradiente/regularizada.

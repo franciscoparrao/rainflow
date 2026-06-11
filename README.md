@@ -39,7 +39,12 @@ multi-catchment runs.
       rates calibrated, the bands beat the lumped model robustly on Río Choapa
       en Cuncumén (validation NSE 0.63–0.76 vs 0.34–0.62) — see
       `data/camels-cl/README.md`
-- [ ] Band geometry from real hypsometric curves (needs per-catchment DEM)
+- [x] **Hypsometric (equal-area) band geometry** (`--hypsometry "min,median,max"`):
+      band elevations read off the catchment's hypsometric curve instead of
+      hand-picked. Matches or beats hand-tuned bands (+0.05–0.11 validation NSE
+      on Río Grande en Las Ramadas) with no guesswork. Core constructor
+      `equal_area_from_hypsometry` also accepts a dense DEM-sampled curve
+- [ ] DEM-sampled hypsometric curves (clip DEM to catchment polygon)
 - [ ] PyO3 Python bindings; CI; subcatchment routing
 
 ## Layout

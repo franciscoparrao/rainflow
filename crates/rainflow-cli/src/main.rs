@@ -40,7 +40,17 @@ struct CalibrateArgs {
     #[arg(long, value_delimiter = ',')]
     bands: Vec<String>,
 
-    /// hbv-bands: elevation the forcing represents (m a.s.l.)
+    /// hbv-bands: build equal-area bands from elevation quantiles
+    /// "min,median,max" (alternative to --bands; uses --n-bands)
+    #[arg(long)]
+    hypsometry: Option<String>,
+
+    /// hbv-bands: number of equal-area bands for --hypsometry
+    #[arg(long, default_value_t = 5)]
+    n_bands: usize,
+
+    /// hbv-bands: elevation the forcing represents (m a.s.l.); defaults to the
+    /// median when using --hypsometry
     #[arg(long)]
     ref_elev: Option<f64>,
 
@@ -320,9 +330,23 @@ fn parse_objective(name: &str) -> Result<Objective> {
     }
 }
 
-/// Parses `--bands "elev:frac,..."` and `--ref-elev` into an `ElevationBands`.
-/// Returns `None` when no bands are given (non-banded models).
+/// Parses the band geometry: either `--hypsometry "min,median,max"` (equal-area
+/// bands) or explicit `--bands "elev:frac,..."`. Returns `None` when neither is
+/// given (non-banded models).
 fn parse_bands(args: &CalibrateArgs) -> Result<Option<ElevationBands<f64>>> {
+    if let Some(spec) = &args.hypsometry {
+        let q: Vec<f64> = spec
+            .split(',')
+            .map(|v| v.trim().parse::<f64>())
+            .collect::<Result<_, _>>()
+            .with_context(|| format!("--hypsometry {spec:?} must be \"min,median,max\""))?;
+        anyhow::ensure!(q.len() == 3, "--hypsometry needs exactly min,median,max");
+        let mut bands = ElevationBands::from_quantiles(q[0], q[1], q[2], args.n_bands)?;
+        if let Some(ref_elev) = args.ref_elev {
+            bands.reference_elevation = ref_elev;
+        }
+        return Ok(Some(bands));
+    }
     if args.bands.is_empty() {
         return Ok(None);
     }

@@ -19,7 +19,9 @@ pub mod hbv;
 pub mod metrics;
 mod uh;
 
-pub use calibrate::{DdsConfig, Objective, calibrate_gr4j, calibrate_hbv, dds_maximize};
+pub use calibrate::{
+    DdsConfig, Objective, calibrate_gr4j, calibrate_hbv, calibrate_hbv_bands, dds_maximize,
+};
 pub use error::Error;
 pub use gr4j::{Gr4j, Gr4jParams, Gr4jState};
-pub use hbv::{Hbv, HbvParams, HbvState};
+pub use hbv::{ElevationBand, ElevationBands, Hbv, HbvBands, HbvParams, HbvState};

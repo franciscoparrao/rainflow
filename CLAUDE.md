@@ -59,7 +59,11 @@ gradiente e híbridos física+ML. La investigación del método vive en
 5. ~~Cuenca nival CAMELS-CL~~ ✅ (4511002 Las Ramadas + 4703002 Cuncumén: rutina
    nival sube NSE val de ≤0.23 a 0.31–0.62; TT/SFCF calibran alto por temperatura
    agregada en cuencas de alto relieve → motiva bandas de elevación en v0.2).
-6. SCE-UA; CI GitHub Actions; LICENSE files; PyO3 bindings.
-7. v0.2: bandas de elevación / semi-distribuido (caso de uso directo: Norte Chico).
+6. ~~Bandas de elevación / semi-distribuido~~ ✅ (`--model hbv-bands`: nieve+suelo
+   por banda con TCALT/PCALT, respuesta y ruteo compartidos; 1 banda = modelo
+   agregado exacto. En Las Ramadas TT vuelve a ~0°C físico y NSE val 0.33→0.51).
+7. Próximo refinamiento de bandas: geometría desde curva hipsométrica real +
+   calibrar/regionalizar TCALT/PCALT (hoy fijos en defaults HBV-light).
+8. SCE-UA; CI GitHub Actions; LICENSE files; PyO3 bindings.
 5. Caso interesante para el paper: 8123001 muestra equifinalidad + no-estacionariedad
    (megasequía post-2010) — benchmark para calibración por gradiente/regularizada.

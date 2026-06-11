@@ -16,6 +16,11 @@
 //!
 //! Temperature forcing is optional: without it the snow routine is bypassed
 //! and all precipitation is treated as rain (adequate for pluvial catchments).
+//!
+//! [`HbvBands`] is the semi-distributed variant: the snow and soil routines
+//! run per elevation band (lapsed temperature, precipitation gradient) and the
+//! area-weighted recharge feeds a single shared response + routing, as in
+//! HBV-light's elevation zones.
 
 use num_traits::Float;
 
@@ -180,64 +185,14 @@ impl<F: Float> Hbv<F> {
     /// returning simulated discharge (mm).
     pub fn step(&self, state: &mut HbvState<F>, p: F, temp: Option<F>, pet: F) -> F {
         let prm = &self.params;
-        let zero = F::zero();
-        let one = F::one();
 
-        // --- Snow routine: split precip, melt/refreeze, release excess ---
         let to_soil = match temp {
-            Some(t) => {
-                if t < prm.tt {
-                    state.snowpack = state.snowpack + p * prm.sfcf;
-                    let refreeze = (prm.cfr * prm.cfmax * (prm.tt - t)).min(state.liquid_water);
-                    state.snowpack = state.snowpack + refreeze;
-                    state.liquid_water = state.liquid_water - refreeze;
-                } else {
-                    let melt = (prm.cfmax * (t - prm.tt)).min(state.snowpack);
-                    state.snowpack = state.snowpack - melt;
-                    // Rain and meltwater pass through the snowpack's liquid
-                    // storage; with no snowpack the capacity is zero and all
-                    // of it is released immediately.
-                    state.liquid_water = state.liquid_water + melt + p;
-                }
-                let capacity = prm.cwh * state.snowpack;
-                let release = (state.liquid_water - capacity).max(zero);
-                state.liquid_water = state.liquid_water - release;
-                release
-            }
+            Some(t) => snow_step(prm, &mut state.snowpack, &mut state.liquid_water, p, t),
             None => p,
         };
-
-        // --- Soil moisture routine (bulk recharge, then overflow, then AET) ---
-        let sm_ratio = (state.soil_moisture / prm.fc).min(one);
-        let mut recharge = to_soil * sm_ratio.powf(prm.beta);
-        state.soil_moisture = state.soil_moisture + to_soil - recharge;
-        let overflow = (state.soil_moisture - prm.fc).max(zero);
-        state.soil_moisture = state.soil_moisture - overflow;
-        recharge = recharge + overflow;
-
-        let aet =
-            (pet * (state.soil_moisture / (prm.fc * prm.lp)).min(one)).min(state.soil_moisture);
-        state.soil_moisture = state.soil_moisture - aet;
-
-        // --- Response routine: upper zone (Q0, Q1) and lower zone (Q2) ---
-        state.suz = state.suz + recharge;
-        let percolation = prm.perc.min(state.suz);
-        state.suz = state.suz - percolation;
-        state.slz = state.slz + percolation;
-
-        let q0 = prm.k0 * (state.suz - prm.uzl).max(zero);
-        state.suz = state.suz - q0;
-        let q1 = prm.k1 * state.suz;
-        state.suz = state.suz - q1;
-        let q2 = prm.k2 * state.slz;
-        state.slz = state.slz - q2;
-
-        // --- Triangular routing ---
-        let qgen = q0 + q1 + q2;
-        for (st, w) in state.routing.iter_mut().zip(&self.weights) {
-            *st = *st + *w * qgen;
-        }
-        shift_front(&mut state.routing)
+        let recharge = soil_step(prm, &mut state.soil_moisture, to_soil, pet);
+        let qgen = response_step(prm, &mut state.suz, &mut state.slz, recharge);
+        route(&self.weights, &mut state.routing, qgen)
     }
 
     /// Runs the full series from the default initial state. `temp` may be
@@ -268,6 +223,255 @@ impl<F: Float> Hbv<F> {
     pub fn storage(&self, state: &HbvState<F>) -> F {
         let routed = state.routing.iter().fold(F::zero(), |acc, &v| acc + v);
         state.snowpack + state.liquid_water + state.soil_moisture + state.suz + state.slz + routed
+    }
+}
+
+/// Snow routine: split precipitation by TT, melt/refreeze, release the liquid
+/// water exceeding the pack's holding capacity. Returns water reaching soil.
+fn snow_step<F: Float>(prm: &HbvParams<F>, snowpack: &mut F, liquid: &mut F, p: F, t: F) -> F {
+    let zero = F::zero();
+    if t < prm.tt {
+        *snowpack = *snowpack + p * prm.sfcf;
+        let refreeze = (prm.cfr * prm.cfmax * (prm.tt - t)).min(*liquid);
+        *snowpack = *snowpack + refreeze;
+        *liquid = *liquid - refreeze;
+    } else {
+        let melt = (prm.cfmax * (t - prm.tt)).min(*snowpack);
+        *snowpack = *snowpack - melt;
+        // Rain and meltwater pass through the snowpack's liquid storage; with
+        // no snowpack the capacity is zero and all of it is released at once.
+        *liquid = *liquid + melt + p;
+    }
+    let capacity = prm.cwh * *snowpack;
+    let release = (*liquid - capacity).max(zero);
+    *liquid = *liquid - release;
+    release
+}
+
+/// Soil moisture routine: bulk recharge, capacity overflow, then AET.
+/// Returns recharge to the response routine.
+fn soil_step<F: Float>(prm: &HbvParams<F>, sm: &mut F, inflow: F, pet: F) -> F {
+    let zero = F::zero();
+    let one = F::one();
+    let sm_ratio = (*sm / prm.fc).min(one);
+    let mut recharge = inflow * sm_ratio.powf(prm.beta);
+    *sm = *sm + inflow - recharge;
+    let overflow = (*sm - prm.fc).max(zero);
+    *sm = *sm - overflow;
+    recharge = recharge + overflow;
+
+    let aet = (pet * (*sm / (prm.fc * prm.lp)).min(one)).min(*sm);
+    *sm = *sm - aet;
+    recharge
+}
+
+/// Response routine: upper zone (Q0 above UZL, then Q1), percolation, lower
+/// zone (Q2). Returns generated runoff before routing.
+fn response_step<F: Float>(prm: &HbvParams<F>, suz: &mut F, slz: &mut F, recharge: F) -> F {
+    let zero = F::zero();
+    *suz = *suz + recharge;
+    let percolation = prm.perc.min(*suz);
+    *suz = *suz - percolation;
+    *slz = *slz + percolation;
+
+    let q0 = prm.k0 * (*suz - prm.uzl).max(zero);
+    *suz = *suz - q0;
+    let q1 = prm.k1 * *suz;
+    *suz = *suz - q1;
+    let q2 = prm.k2 * *slz;
+    *slz = *slz - q2;
+    q0 + q1 + q2
+}
+
+/// Pushes generated runoff through the triangular routing buffer.
+fn route<F: Float>(weights: &[F], buffer: &mut [F], qgen: F) -> F {
+    for (st, w) in buffer.iter_mut().zip(weights) {
+        *st = *st + *w * qgen;
+    }
+    shift_front(buffer)
+}
+
+/// One elevation band: mean elevation (m a.s.l.) and its fraction of the
+/// catchment area.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ElevationBand<F> {
+    pub elevation: F,
+    pub area_fraction: F,
+}
+
+/// Semi-distributed configuration: elevation bands plus the lapse/gradient
+/// rates used to extrapolate the lumped forcing to each band.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ElevationBands<F> {
+    pub bands: Vec<ElevationBand<F>>,
+    /// Elevation the forcing series represents (e.g. catchment mean for a
+    /// gridded product), m a.s.l.
+    pub reference_elevation: F,
+    /// Temperature lapse rate (°C per 100 m, positive = cooler with height).
+    /// HBV-light default (TCALT): 0.6.
+    pub tcalt: F,
+    /// Precipitation gradient (fraction per 100 m). HBV-light default
+    /// (PCALT): 0.10.
+    pub pcalt: F,
+}
+
+impl<F: Float> ElevationBands<F> {
+    /// HBV-light default lapse rates.
+    pub fn new(bands: Vec<ElevationBand<F>>, reference_elevation: F) -> Self {
+        Self {
+            bands,
+            reference_elevation,
+            tcalt: lit(0.6),
+            pcalt: lit(0.10),
+        }
+    }
+
+    fn validate(&self) -> Result<(), Error> {
+        if self.bands.is_empty() {
+            return Err(Error::InvalidParameter {
+                name: "bands",
+                reason: "at least one elevation band is required".into(),
+            });
+        }
+        let total = self
+            .bands
+            .iter()
+            .fold(F::zero(), |acc, b| acc + b.area_fraction);
+        let tolerance = lit(1e-3);
+        if (total - F::one()).abs() > tolerance {
+            return Err(Error::InvalidParameter {
+                name: "bands",
+                reason: format!("area fractions must sum to 1 (got {:?})", total.to_f64()),
+            });
+        }
+        for (i, b) in self.bands.iter().enumerate() {
+            if b.area_fraction < F::zero() || !b.elevation.is_finite() {
+                return Err(Error::InvalidParameter {
+                    name: "bands",
+                    reason: format!("band {i}: negative fraction or non-finite elevation"),
+                });
+            }
+        }
+        if !self.tcalt.is_finite() || !self.pcalt.is_finite() {
+            return Err(Error::InvalidParameter {
+                name: "bands",
+                reason: "tcalt/pcalt must be finite".into(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Per-band snow + soil state of the semi-distributed model.
+#[derive(Debug, Clone)]
+pub struct BandState<F> {
+    pub snowpack: F,
+    pub liquid_water: F,
+    pub soil_moisture: F,
+}
+
+/// State of [`HbvBands`].
+#[derive(Debug, Clone)]
+pub struct HbvBandsState<F> {
+    pub bands: Vec<BandState<F>>,
+    pub suz: F,
+    pub slz: F,
+    routing: Vec<F>,
+}
+
+/// Semi-distributed HBV: the snow and soil routines run independently per
+/// elevation band (with lapsed temperature and a precipitation gradient);
+/// the area-weighted recharge feeds a single shared response routine, as in
+/// HBV-light's elevation zones.
+///
+/// Temperature forcing is required — elevation bands without a snow routine
+/// would only re-scale precipitation.
+#[derive(Debug, Clone)]
+pub struct HbvBands<F> {
+    params: HbvParams<F>,
+    config: ElevationBands<F>,
+    weights: Vec<F>,
+}
+
+impl<F: Float> HbvBands<F> {
+    pub fn new(params: HbvParams<F>, config: ElevationBands<F>) -> Result<Self, Error> {
+        // Reuse the lumped constructor for parameter validation.
+        let lumped = Hbv::new(params)?;
+        config.validate()?;
+        Ok(Self {
+            params,
+            config,
+            weights: lumped.weights,
+        })
+    }
+
+    pub fn params(&self) -> &HbvParams<F> {
+        &self.params
+    }
+
+    pub fn config(&self) -> &ElevationBands<F> {
+        &self.config
+    }
+
+    /// Default initial state: each band's soil at half capacity, empty stores.
+    pub fn initial_state(&self) -> HbvBandsState<F> {
+        HbvBandsState {
+            bands: self
+                .config
+                .bands
+                .iter()
+                .map(|_| BandState {
+                    snowpack: F::zero(),
+                    liquid_water: F::zero(),
+                    soil_moisture: lit::<F>(0.5) * self.params.fc,
+                })
+                .collect(),
+            suz: F::zero(),
+            slz: F::zero(),
+            routing: vec![F::zero(); self.weights.len()],
+        }
+    }
+
+    /// Advances one time step. `p`, `t` and `pet` are the lumped forcing at
+    /// the reference elevation; each band sees lapsed temperature and a
+    /// precipitation gradient (PET is kept uniform).
+    pub fn step(&self, state: &mut HbvBandsState<F>, p: F, t: F, pet: F) -> F {
+        let prm = &self.params;
+        let cfg = &self.config;
+        let per100 = lit::<F>(0.01);
+
+        let mut recharge = F::zero();
+        for (band, bs) in cfg.bands.iter().zip(state.bands.iter_mut()) {
+            let dz100 = (band.elevation - cfg.reference_elevation) * per100;
+            let tb = t - cfg.tcalt * dz100;
+            let pb = (p * (F::one() + cfg.pcalt * dz100)).max(F::zero());
+            let to_soil = snow_step(prm, &mut bs.snowpack, &mut bs.liquid_water, pb, tb);
+            recharge =
+                recharge + band.area_fraction * soil_step(prm, &mut bs.soil_moisture, to_soil, pet);
+        }
+
+        let qgen = response_step(prm, &mut state.suz, &mut state.slz, recharge);
+        route(&self.weights, &mut state.routing, qgen)
+    }
+
+    /// Runs the full series from the default initial state.
+    pub fn run(&self, precip: &[F], pet: &[F], temp: &[F]) -> Result<Vec<F>, Error> {
+        if precip.len() != pet.len() {
+            return Err(Error::ForcingLengthMismatch {
+                precip: precip.len(),
+                pet: pet.len(),
+            });
+        }
+        if temp.len() != precip.len() {
+            return Err(Error::InvalidParameter {
+                name: "temp",
+                reason: format!("expected {} steps, got {}", precip.len(), temp.len()),
+            });
+        }
+        let mut state = self.initial_state();
+        Ok((0..precip.len())
+            .map(|i| self.step(&mut state, precip[i], temp[i], pet[i]))
+            .collect())
     }
 }
 
@@ -465,6 +669,87 @@ mod tests {
                 "f32/f64 divergence: {a} vs {b}"
             );
         }
+    }
+
+    #[test]
+    fn single_band_at_reference_elevation_matches_lumped_model() {
+        let (p, pet, temp) = synthetic_forcing(800);
+        let lumped = Hbv::new(params()).unwrap();
+        let q_lumped = lumped.run(&p, &pet, Some(&temp)).unwrap();
+
+        let banded = HbvBands::new(
+            params(),
+            ElevationBands::new(
+                vec![ElevationBand {
+                    elevation: 1000.0,
+                    area_fraction: 1.0,
+                }],
+                1000.0,
+            ),
+        )
+        .unwrap();
+        let q_banded = banded.run(&p, &pet, &temp).unwrap();
+        for (a, b) in q_lumped.iter().zip(&q_banded) {
+            assert!((a - b).abs() < 1e-12, "banded != lumped: {a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn higher_bands_accumulate_more_snow() {
+        let bands = ElevationBands::new(
+            vec![
+                ElevationBand {
+                    elevation: 1500.0,
+                    area_fraction: 0.5,
+                },
+                ElevationBand {
+                    elevation: 3500.0,
+                    area_fraction: 0.5,
+                },
+            ],
+            2500.0,
+        );
+        let model = HbvBands::new(params(), bands).unwrap();
+        let (p, pet, temp) = synthetic_forcing(2000);
+        let mut state = model.initial_state();
+        let mut max_low = 0.0_f64;
+        let mut max_high = 0.0_f64;
+        for i in 0..p.len() {
+            model.step(&mut state, p[i], temp[i], pet[i]);
+            max_low = max_low.max(state.bands[0].snowpack);
+            max_high = max_high.max(state.bands[1].snowpack);
+        }
+        assert!(
+            max_high > max_low,
+            "high band ({max_high} mm) should out-accumulate low band ({max_low} mm)"
+        );
+        assert!(max_high > 0.0, "no snow accumulated at 3500 m");
+    }
+
+    #[test]
+    fn bands_validation_rejects_bad_configs() {
+        let band = |e: f64, f: f64| ElevationBand {
+            elevation: e,
+            area_fraction: f,
+        };
+        // Fractions must sum to 1.
+        assert!(
+            HbvBands::new(
+                params(),
+                ElevationBands::new(vec![band(1000.0, 0.4), band(2000.0, 0.4)], 1500.0)
+            )
+            .is_err()
+        );
+        // At least one band.
+        assert!(HbvBands::new(params(), ElevationBands::new(vec![], 1500.0)).is_err());
+        // Negative fraction.
+        assert!(
+            HbvBands::new(
+                params(),
+                ElevationBands::new(vec![band(1000.0, 1.5), band(2000.0, -0.5)], 1500.0)
+            )
+            .is_err()
+        );
     }
 
     #[test]

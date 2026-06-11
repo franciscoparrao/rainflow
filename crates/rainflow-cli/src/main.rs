@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser};
 use rainflow_core::calibrate::{self, DdsConfig, Objective};
 use rainflow_core::metrics;
-use rainflow_core::{Gr4j, Gr4jParams, Hbv};
+use rainflow_core::{ElevationBand, ElevationBands, Gr4j, Gr4jParams, Hbv, HbvBands};
 
 #[derive(Parser)]
 #[command(
@@ -32,8 +32,17 @@ struct CalibrateArgs {
     forcing: PathBuf,
 
     /// Model to calibrate
-    #[arg(long, value_parser = ["gr4j", "hbv"], default_value = "gr4j")]
+    #[arg(long, value_parser = ["gr4j", "hbv", "hbv-bands"], default_value = "gr4j")]
     model: String,
+
+    /// hbv-bands: comma-separated "elevation:area_fraction" pairs
+    /// (e.g. "1500:0.3,2500:0.4,3500:0.3")
+    #[arg(long, value_delimiter = ',')]
+    bands: Vec<String>,
+
+    /// hbv-bands: elevation the forcing represents (m a.s.l.)
+    #[arg(long)]
+    ref_elev: Option<f64>,
 
     /// Objective to maximize
     #[arg(long, value_parser = ["nse", "kge", "lognse"], default_value = "nse")]
@@ -109,6 +118,7 @@ fn split_sample(args: CalibrateArgs) -> Result<()> {
         ..Default::default()
     };
     let mid = n / 2;
+    let bands = parse_bands(&args)?;
 
     // Mask observations outside a period with NaN; the metrics skip them.
     let mask = |range: std::ops::Range<usize>| -> Vec<f64> {
@@ -144,6 +154,7 @@ fn split_sample(args: CalibrateArgs) -> Result<()> {
             args.warmup,
             objective,
             &config,
+            bands.as_ref(),
         )?;
         let val = objective_value(objective, &val_obs[args.warmup..], &cal.qsim[args.warmup..]);
         println!(
@@ -172,6 +183,7 @@ fn calibrate_dispatch(
     warmup: usize,
     objective: Objective,
     config: &DdsConfig,
+    bands_config: Option<&ElevationBands<f64>>,
 ) -> Result<CalOutcome> {
     match model {
         "gr4j" => {
@@ -225,6 +237,51 @@ fn calibrate_dispatch(
                 qsim,
             })
         }
+        "hbv-bands" => {
+            let temp = forcing
+                .temp
+                .as_deref()
+                .context("hbv-bands requires a temperature column")?;
+            let ebands = bands_config.context("hbv-bands requires --bands and --ref-elev")?;
+            let cal = calibrate::calibrate_hbv_bands(
+                &forcing.precip,
+                &forcing.pet,
+                temp,
+                ebands,
+                qobs,
+                warmup,
+                objective,
+                config,
+            )?;
+            let qsim = HbvBands::new(cal.params, ebands.clone())?.run(
+                &forcing.precip,
+                &forcing.pet,
+                temp,
+            )?;
+            let p = cal.params;
+            Ok(CalOutcome {
+                value: cal.value,
+                evaluations: cal.evaluations,
+                desc: format!(
+                    "{} bands | tt={:.2} cfmax={:.2} sfcf={:.2} fc={:.0} lp={:.2} beta={:.2} \
+                     k0={:.3} k1={:.3} k2={:.4} uzl={:.1} perc={:.2} maxbas={:.2}",
+                    ebands.bands.len(),
+                    p.tt,
+                    p.cfmax,
+                    p.sfcf,
+                    p.fc,
+                    p.lp,
+                    p.beta,
+                    p.k0,
+                    p.k1,
+                    p.k2,
+                    p.uzl,
+                    p.perc,
+                    p.maxbas
+                ),
+                qsim,
+            })
+        }
         other => anyhow::bail!("unknown model {other:?}"),
     }
 }
@@ -236,6 +293,34 @@ fn parse_objective(name: &str) -> Result<Objective> {
         "lognse" => Ok(Objective::LogNse),
         other => anyhow::bail!("unknown objective {other:?}"),
     }
+}
+
+/// Parses `--bands "elev:frac,..."` and `--ref-elev` into an `ElevationBands`.
+/// Returns `None` when no bands are given (non-banded models).
+fn parse_bands(args: &CalibrateArgs) -> Result<Option<ElevationBands<f64>>> {
+    if args.bands.is_empty() {
+        return Ok(None);
+    }
+    let ref_elev = args
+        .ref_elev
+        .context("--bands requires --ref-elev (the elevation the forcing represents)")?;
+    let mut bands = Vec::with_capacity(args.bands.len());
+    for spec in &args.bands {
+        let (elev, frac) = spec
+            .split_once(':')
+            .with_context(|| format!("band {spec:?} must be \"elevation:area_fraction\""))?;
+        bands.push(ElevationBand {
+            elevation: elev
+                .trim()
+                .parse()
+                .with_context(|| format!("bad elevation in {spec:?}"))?,
+            area_fraction: frac
+                .trim()
+                .parse()
+                .with_context(|| format!("bad area fraction in {spec:?}"))?,
+        });
+    }
+    Ok(Some(ElevationBands::new(bands, ref_elev)))
 }
 
 fn objective_value(objective: Objective, obs: &[f64], sim: &[f64]) -> Option<f64> {
@@ -260,7 +345,16 @@ fn calibrate(args: CalibrateArgs) -> Result<()> {
         ..Default::default()
     };
 
-    let cal = calibrate_dispatch(&args.model, &forcing, qobs, args.warmup, objective, &config)?;
+    let bands = parse_bands(&args)?;
+    let cal = calibrate_dispatch(
+        &args.model,
+        &forcing,
+        qobs,
+        args.warmup,
+        objective,
+        &config,
+        bands.as_ref(),
+    )?;
 
     println!(
         "DDS calibration of {} ({} evaluations, seed {}, warm-up {})",

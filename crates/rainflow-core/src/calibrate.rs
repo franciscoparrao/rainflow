@@ -13,7 +13,7 @@ use num_traits::Float;
 
 use crate::error::Error;
 use crate::gr4j::{Gr4j, Gr4jParams};
-use crate::hbv::{Hbv, HbvParams};
+use crate::hbv::{ElevationBands, Hbv, HbvBands, HbvParams};
 use crate::metrics;
 
 /// Deterministic SplitMix64 RNG — small, seedable, good enough for DDS.
@@ -327,8 +327,8 @@ pub fn hbv_default_bounds<F: Float>(with_snow: bool) -> Vec<(F, F)> {
         (lit(0.001), lit(0.2)),  // K2
         (lit(0.0), lit(100.0)),  // UZL
         // Upper bound generous: wet catchments saturate the common 0-6 range.
-        (lit(0.0), lit(10.0)),   // PERC
-        (lit(1.0), lit(7.0)),    // MAXBAS
+        (lit(0.0), lit(10.0)), // PERC
+        (lit(1.0), lit(7.0)),  // MAXBAS
     ]);
     bounds
 }
@@ -419,6 +419,70 @@ pub fn calibrate_hbv<F: Float>(
 
     Ok(HbvCalibration {
         params: hbv_params_from_vector(&result.params, with_snow),
+        value: result.value,
+        evaluations: result.evaluations,
+    })
+}
+
+/// Calibrates the semi-distributed [`HbvBands`] model (temperature required;
+/// the full 12-parameter set including the snow routine is searched). Lapse
+/// rates and band geometry stay fixed at the supplied configuration.
+// One argument more than `calibrate_hbv` (the band configuration); kept as a
+// flat signature to mirror the sibling calibration functions.
+#[allow(clippy::too_many_arguments)]
+pub fn calibrate_hbv_bands<F: Float>(
+    precip: &[F],
+    pet: &[F],
+    temp: &[F],
+    bands: &ElevationBands<F>,
+    qobs: &[F],
+    warmup: usize,
+    objective: Objective,
+    config: &DdsConfig,
+) -> Result<HbvCalibration<F>, Error> {
+    if precip.len() != pet.len() {
+        return Err(Error::ForcingLengthMismatch {
+            precip: precip.len(),
+            pet: pet.len(),
+        });
+    }
+    if qobs.len() != precip.len() || temp.len() != precip.len() {
+        return Err(Error::InvalidParameter {
+            name: "qobs/temp",
+            reason: format!(
+                "expected {} steps, got qobs={} temp={}",
+                precip.len(),
+                qobs.len(),
+                temp.len()
+            ),
+        });
+    }
+    if warmup >= precip.len() {
+        return Err(Error::InvalidParameter {
+            name: "warmup",
+            reason: format!(
+                "warm-up ({warmup}) must be shorter than the series ({})",
+                precip.len()
+            ),
+        });
+    }
+
+    let bounds = hbv_default_bounds::<F>(true);
+    let nan = F::nan();
+    let result = dds_maximize(&bounds, None, config, |x| {
+        let Ok(model) = HbvBands::new(hbv_params_from_vector(x, true), bands.clone()) else {
+            return nan;
+        };
+        let Ok(qsim) = model.run(precip, pet, temp) else {
+            return nan;
+        };
+        objective
+            .evaluate(&qobs[warmup..], &qsim[warmup..])
+            .unwrap_or(nan)
+    })?;
+
+    Ok(HbvCalibration {
+        params: hbv_params_from_vector(&result.params, true),
         value: result.value,
         evaluations: result.evaluations,
     })

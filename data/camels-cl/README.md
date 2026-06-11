@@ -50,9 +50,30 @@ The snow routine is decisive: without it both models are useless in these
 Andean catchments (val NSE ≤ 0.23, often negative); with it HBV reaches
 val NSE 0.31–0.62. TT and SFCF calibrate high (3–4 °C, 1.1–2.0) because the
 lumped catchment-mean temperature underrepresents the cold high elevations
-and CR2MET undercatches high-Andes precipitation — the structural fix is
-elevation bands (semi-distributed, planned for v0.2). Absolute values are
+and CR2MET undercatches high-Andes precipitation. Absolute values are
 consistent with published CAMELS-CL benchmarks for the arid Norte Chico.
+
+## Elevation bands (semi-distributed HBV, NSE, 4000 evaluations)
+
+Three equal-area bands per catchment with TCALT = 0.6 °C/100 m and
+PCALT = 0.10/100 m (HBV-light defaults), forcing referenced to the catchment
+mean elevation.
+
+| catchment | model | cal A → val B | cal B → val A | calibrated TT |
+|---|---|---|---|---|
+| 4511002 | HBV lumped | 0.473 → 0.329 | 0.679 → 0.314 | 3.0 / 3.9 °C |
+| 4511002 | HBV 3 bands | 0.499 → **0.513** | 0.744 → 0.327 | **0.0 / 0.5 °C** |
+| 4703002 | HBV lumped | 0.794 → 0.616 | 0.721 → 0.344 | 3.8 / 3.5 °C |
+| 4703002 | HBV 3 bands | 0.642 → 0.228 | 0.415 → 0.531 | 2.8 / 3.4 °C |
+
+The headline result is **physical**, not just skill: in 4511002 the bands let
+TT calibrate back to ~0 °C (the defensible rain/snow threshold) instead of the
+3–4 °C the lumped model needed as a fudge for the cold high terrain — and
+validation NSE improves on one fold (0.33 → 0.51). For 4703002 (an enormous
+1153–5038 m relief) three equal bands with default lapse rates are too coarse:
+skill is noisier and TT stays high. Takeaways for the next iteration: derive
+band geometry from the real hypsometric curve, and calibrate (or
+regionalize) TCALT/PCALT rather than fixing them at the HBV-light defaults.
 
 Reproduce with:
 

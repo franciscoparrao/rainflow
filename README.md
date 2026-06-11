@@ -31,6 +31,12 @@ multi-catchment runs.
       degree-day routine lifts validation NSE from ≤ 0.23 (no snow) to
       0.31–0.62; remaining gap is structural (lumped temperature → elevation
       bands planned for v0.2)
+- [x] **Semi-distributed HBV with elevation bands** (`--model hbv-bands`):
+      per-band snow + soil with temperature lapse (TCALT) and precipitation
+      gradient (PCALT), shared response and routing. Single band at the
+      reference elevation reproduces the lumped model exactly. On Río Grande
+      en Las Ramadas the bands let TT calibrate back to ~0 °C (physical) and
+      lift validation NSE 0.33 → 0.51 — see `data/camels-cl/README.md`
 - [ ] SCE-UA
 - [ ] Semi-distributed mode (subcatchments) + snow module (v0.2)
 

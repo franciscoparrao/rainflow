@@ -1,0 +1,21 @@
+[package]
+name = "rainflow-python"
+description = "Python bindings (PyO3) for the rainflow conceptual hydrological models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "rainflow"
+crate-type = ["cdylib"]
+
+[dependencies]
+rainflow-core = { path = "../rainflow-core" }
+
+[dependencies.pyo3]
+version = "0.23"
+# abi3-py39: one wheel works on CPython 3.9+; extension-module leaves the
+# libpython symbols to be resolved at import time (no link-time dependency).
+features = ["extension-module", "abi3-py39"]

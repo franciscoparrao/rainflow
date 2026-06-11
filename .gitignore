@@ -1,3 +1,9 @@
 /target
 **/*.rs.bk
 qsim.csv
+
+# Python / maturin
+dist/
+*.so
+__pycache__/
+.venv/

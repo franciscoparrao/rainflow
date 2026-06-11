@@ -44,8 +44,13 @@ multi-catchment runs.
       hand-picked. Matches or beats hand-tuned bands (+0.05–0.11 validation NSE
       on Río Grande en Las Ramadas) with no guesswork. Core constructor
       `equal_area_from_hypsometry` also accepts a dense DEM-sampled curve
+- [x] **Python bindings** (PyO3 + maturin, `rainflow` on PyPI-style wheels):
+      `Gr4j`, `Hbv`, the metrics, `calibrate_gr4j`/`calibrate_hbv` (DDS or
+      SCE-UA) and `hypsometric_bands`. One abi3 wheel covers CPython ≥ 3.9
+- [x] **CI** (GitHub Actions): fmt + clippy (`-D warnings`) + tests, plus a
+      job that builds and smoke-tests the Python wheel
 - [ ] DEM-sampled hypsometric curves (clip DEM to catchment polygon)
-- [ ] PyO3 Python bindings; CI; subcatchment routing
+- [ ] Subcatchment routing
 
 ## Layout
 
@@ -53,6 +58,7 @@ multi-catchment runs.
   everything generic over `F: num_traits::Float` so dual-number/tape scalar types
   pass through for gradient-based calibration.
 - `crates/rainflow-cli` — `rainflow` binary (CSV in, simulated discharge + metrics out).
+- `crates/rainflow-python` — PyO3 bindings (`rainflow` module), built with maturin.
 
 ## Quick start
 
@@ -73,6 +79,28 @@ The forcing CSV needs columns (flexible, case-insensitive names):
 `date`, `p` (precipitation, mm), `pet` (potential evapotranspiration, mm) and
 optionally `qobs` (observed discharge, mm) to compute metrics. Gaps (`NA`) are
 allowed only in `qobs`.
+
+## Python
+
+```sh
+cd crates/rainflow-python
+maturin develop --release   # or: maturin build --release --out dist
+```
+
+```python
+import rainflow
+
+q = rainflow.Gr4j(350.0, -1.5, 90.0, 1.7).run(precip, pet)
+print(rainflow.kge(qobs, q))
+
+cal = rainflow.calibrate_gr4j(precip, pet, qobs, algorithm="sce", iterations=4000)
+print(cal["params"], cal["value"])
+
+# HBV with the snow routine (pass temperature)
+qh = rainflow.Hbv(0.0, 3.5, 0.9, 250.0, 0.7, 2.0, 0.3, 0.1, 0.01, 20.0, 2.0, 2.5).run(
+    precip, pet, temp=temperature
+)
+```
 
 ## Validation
 

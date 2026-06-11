@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["crates/rainflow-core", "crates/rainflow-cli"]
+members = ["crates/rainflow-core", "crates/rainflow-cli", "crates/rainflow-python"]
+# The Python crate links libpython, so keep it out of bare `cargo build`/`test`
+# (build it with maturin). `cargo test`/`clippy` without --workspace stay clean.
+default-members = ["crates/rainflow-core", "crates/rainflow-cli"]
 
 [workspace.package]
 version = "0.1.0"

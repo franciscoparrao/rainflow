@@ -295,7 +295,7 @@ pub fn sce_maximize<F: Float>(
     let lit = |v: f64| F::from(v).expect("f64 literal must be representable in F");
     // Minimize -objective; rejected (non-finite) candidates score +inf.
     let inf = F::infinity();
-    let mut eval = |x: &[F], objective: &mut dyn FnMut(&[F]) -> F| -> F {
+    let eval = |x: &[F], objective: &mut dyn FnMut(&[F]) -> F| -> F {
         let v = objective(x);
         if v.is_finite() { -v } else { inf }
     };
@@ -342,8 +342,8 @@ pub fn sce_maximize<F: Float>(
                 // Centroid of the q-1 best parents (exclude the worst).
                 let mut centroid = vec![F::zero(); n];
                 for &pi in &parents[..q - 1] {
-                    for d in 0..n {
-                        centroid[d] = centroid[d] + complex[pi].0[d];
+                    for (c, &v) in centroid.iter_mut().zip(&complex[pi].0) {
+                        *c = *c + v;
                     }
                 }
                 let qm1 = lit((q - 1) as f64);

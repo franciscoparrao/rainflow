@@ -359,7 +359,8 @@ impl<F: Float> ElevationBands<F> {
             if w[1].0 < w[0].0 || w[1].1 < w[0].1 || !w[0].0.is_finite() || !w[0].1.is_finite() {
                 return Err(Error::InvalidParameter {
                     name: "curve",
-                    reason: "knots must be sorted with non-decreasing fraction and elevation".into(),
+                    reason: "knots must be sorted with non-decreasing fraction and elevation"
+                        .into(),
                 });
             }
         }
@@ -387,11 +388,7 @@ impl<F: Float> ElevationBands<F> {
     /// This is the data-poor fallback; a curve sampled from a DEM clipped to
     /// the catchment is strictly better and plugs into the same constructor.
     pub fn from_quantiles(min: F, median: F, max: F, n: usize) -> Result<Self, Error> {
-        let curve = [
-            (F::zero(), min),
-            (lit(0.5), median),
-            (F::one(), max),
-        ];
+        let curve = [(F::zero(), min), (lit(0.5), median), (F::one(), max)];
         Self::equal_area_from_hypsometry(&curve, n, median)
     }
 
@@ -872,7 +869,11 @@ mod tests {
         let eb = ElevationBands::equal_area_from_hypsometry(&curve, 4, 2000.0).unwrap();
         for (i, b) in eb.bands.iter().enumerate() {
             let expected = 1000.0 + 2000.0 * (i as f64 + 0.5) / 4.0;
-            assert!((b.elevation - expected).abs() < 1.0, "band {i}: {} vs {expected}", b.elevation);
+            assert!(
+                (b.elevation - expected).abs() < 1.0,
+                "band {i}: {} vs {expected}",
+                b.elevation
+            );
         }
     }
 

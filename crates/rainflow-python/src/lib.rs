@@ -21,11 +21,18 @@ fn parse_objective(name: &str) -> PyResult<Objective> {
         "nse" => Ok(Objective::Nse),
         "kge" => Ok(Objective::Kge),
         "lognse" | "log_nse" => Ok(Objective::LogNse),
-        other => Err(PyValueError::new_err(format!("unknown objective {other:?}"))),
+        other => Err(PyValueError::new_err(format!(
+            "unknown objective {other:?}"
+        ))),
     }
 }
 
-fn build_optimizer(algorithm: &str, iterations: usize, seed: u64, complexes: usize) -> PyResult<Optimizer> {
+fn build_optimizer(
+    algorithm: &str,
+    iterations: usize,
+    seed: u64,
+    complexes: usize,
+) -> PyResult<Optimizer> {
     match algorithm.to_lowercase().as_str() {
         "dds" => Ok(Optimizer::Dds(DdsConfig {
             max_iter: iterations,
@@ -37,7 +44,9 @@ fn build_optimizer(algorithm: &str, iterations: usize, seed: u64, complexes: usi
             max_iter: iterations,
             seed,
         })),
-        other => Err(PyValueError::new_err(format!("unknown algorithm {other:?}"))),
+        other => Err(PyValueError::new_err(format!(
+            "unknown algorithm {other:?}"
+        ))),
     }
 }
 
@@ -114,9 +123,7 @@ impl Hbv {
     /// routine is bypassed (pluvial catchments).
     #[pyo3(signature = (precip, pet, temp=None))]
     fn run(&self, precip: Vec<f64>, pet: Vec<f64>, temp: Option<Vec<f64>>) -> PyResult<Vec<f64>> {
-        self.inner
-            .run(&precip, &pet, temp.as_deref())
-            .map_err(err)
+        self.inner.run(&precip, &pet, temp.as_deref()).map_err(err)
     }
 }
 
@@ -211,9 +218,20 @@ fn calibrate_hbv(
     let p = cal.params;
     let params = pyo3::types::PyDict::new(py);
     for (k, v) in [
-        ("tt", p.tt), ("cfmax", p.cfmax), ("sfcf", p.sfcf), ("cfr", p.cfr), ("cwh", p.cwh),
-        ("fc", p.fc), ("lp", p.lp), ("beta", p.beta), ("k0", p.k0), ("k1", p.k1),
-        ("k2", p.k2), ("uzl", p.uzl), ("perc", p.perc), ("maxbas", p.maxbas),
+        ("tt", p.tt),
+        ("cfmax", p.cfmax),
+        ("sfcf", p.sfcf),
+        ("cfr", p.cfr),
+        ("cwh", p.cwh),
+        ("fc", p.fc),
+        ("lp", p.lp),
+        ("beta", p.beta),
+        ("k0", p.k0),
+        ("k1", p.k1),
+        ("k2", p.k2),
+        ("uzl", p.uzl),
+        ("perc", p.perc),
+        ("maxbas", p.maxbas),
     ] {
         params.set_item(k, v)?;
     }

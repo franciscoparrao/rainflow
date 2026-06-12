@@ -112,6 +112,33 @@ elevations are now objective and reproducible from reported attributes. The
 reconstruction from three quantiles is coarse; a DEM-derived curve is the
 accuracy ceiling and uses the identical core constructor.
 
+### DEM-derived hypsometric curves
+
+`<id>_hypsometry.csv` holds the real hypsometric curve (101 knots) of each
+snow catchment, computed from the **Copernicus DEM GLO-30** clipped to the
+official CAMELS-CL catchment polygon (`scripts/hypsometry_from_dem.py`). The
+clipped DEM statistics reproduce the reported CAMELS-CL attributes almost
+exactly (e.g. 4703002: min/mean/max 1158/3143/5054 m vs reported
+1153/3142/5038 m), confirming the clip. Feed the curve to the CLI with
+`--hypsometry-file`, which builds `n` equal-area bands via the same
+`ElevationBands::equal_area_from_hypsometry` core constructor.
+
+| catchment | geometry | cal A → val B | cal B → val A |
+|---|---|---|---|
+| 4511002 | 5 bands, reconstructed (3 quantiles) | 0.534 → 0.430 | 0.787 → 0.441 |
+| 4511002 | 5 bands, **DEM curve** | 0.528 → 0.470 | 0.789 → 0.329 |
+| 4703002 | 5 bands, reconstructed (3 quantiles) | 0.891 → 0.738 | 0.800 → 0.648 |
+| 4703002 | 5 bands, **DEM curve** | 0.866 → 0.747 | 0.798 → 0.667 |
+
+The real curve is concave (most of the area sits at mid-to-high elevations, so
+linear interpolation between three quantiles misplaces the outer bands by
+300–400 m). With five bands and the lapse rates calibrated the *skill*
+difference is small — the calibrated lapse absorbs some geometry error — but
+the DEM geometry is objective and reproducible rather than reconstructed.
+Pushing to 10 bands does not help (it raises the between-fold spread:
+overfitting on these short records), so five equal-area bands is the
+operating point. A DEM is the right ingredient; more bands is not.
+
 Reproduce with:
 
 ```sh

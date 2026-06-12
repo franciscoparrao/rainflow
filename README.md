@@ -49,7 +49,11 @@ multi-catchment runs.
       SCE-UA) and `hypsometric_bands`. One abi3 wheel covers CPython ≥ 3.9
 - [x] **CI** (GitHub Actions): fmt + clippy (`-D warnings`) + tests, plus a
       job that builds and smoke-tests the Python wheel
-- [ ] DEM-sampled hypsometric curves (clip DEM to catchment polygon)
+- [x] **DEM-derived hypsometric curves** (`--hypsometry-file`): real curve from
+      Copernicus DEM GLO-30 clipped to the catchment polygon
+      (`scripts/hypsometry_from_dem.py`); the clip reproduces CAMELS-CL
+      elevation attributes to a few metres. Objective band geometry, same core
+      constructor as the quantile reconstruction
 - [ ] Subcatchment routing
 
 ## Layout

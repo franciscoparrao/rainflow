@@ -45,7 +45,13 @@ struct CalibrateArgs {
     #[arg(long)]
     hypsometry: Option<String>,
 
-    /// hbv-bands: number of equal-area bands for --hypsometry
+    /// hbv-bands: CSV hypsometric curve "area_fraction,elevation_m" (e.g.
+    /// derived from a DEM clipped to the catchment); builds --n-bands
+    /// equal-area bands from the real curve
+    #[arg(long)]
+    hypsometry_file: Option<PathBuf>,
+
+    /// hbv-bands: number of equal-area bands for --hypsometry[-file]
     #[arg(long, default_value_t = 5)]
     n_bands: usize,
 
@@ -334,6 +340,38 @@ fn parse_objective(name: &str) -> Result<Objective> {
 /// bands) or explicit `--bands "elev:frac,..."`. Returns `None` when neither is
 /// given (non-banded models).
 fn parse_bands(args: &CalibrateArgs) -> Result<Option<ElevationBands<f64>>> {
+    if let Some(path) = &args.hypsometry_file {
+        let mut rdr = csv::Reader::from_path(path)
+            .with_context(|| format!("cannot open hypsometry file {}", path.display()))?;
+        let mut curve = Vec::new();
+        for rec in rdr.records() {
+            let rec = rec?;
+            let frac: f64 = rec
+                .get(0)
+                .unwrap_or("")
+                .trim()
+                .parse()
+                .with_context(|| format!("bad area_fraction in {}", path.display()))?;
+            let elev: f64 = rec
+                .get(1)
+                .unwrap_or("")
+                .trim()
+                .parse()
+                .with_context(|| format!("bad elevation in {}", path.display()))?;
+            curve.push((frac, elev));
+        }
+        // Reference elevation: explicit flag, else the curve's median knot.
+        let ref_elev = args.ref_elev.unwrap_or_else(|| {
+            curve
+                .iter()
+                .min_by(|a, b| (a.0 - 0.5).abs().partial_cmp(&(b.0 - 0.5).abs()).unwrap())
+                .map(|&(_, e)| e)
+                .unwrap_or(0.0)
+        });
+        let bands = ElevationBands::equal_area_from_hypsometry(&curve, args.n_bands, ref_elev)
+            .map_err(|e| anyhow::anyhow!(e))?;
+        return Ok(Some(bands));
+    }
     if let Some(spec) = &args.hypsometry {
         let q: Vec<f64> = spec
             .split(',')

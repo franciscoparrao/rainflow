@@ -69,8 +69,11 @@ gradiente e híbridos física+ML. La investigación del método vive en
    bandas equi-área con elevación leída de la curva hipsométrica; iguala/supera
    a las bandas a-ojo, +0.05–0.11 NSE val en 4511002, sin arbitrariedad).
    El core `equal_area_from_hypsometry` acepta también curva densa de DEM.
-10. Próximo: curva hipsométrica desde DEM recortado por polígono de cuenca
-    (mejora la reconstrucción cruda desde 3 cuantiles).
-11. CI GitHub Actions; LICENSE files; PyO3 bindings.
+10. ~~Curva hipsométrica desde DEM~~ ✅ (Copernicus GLO-30 recortado por polígono
+    CAMELS-CL oficial vía gateway GIS; `--hypsometry-file`; el recorte reproduce
+    los atributos CAMELS-CL a pocos metros. Skill comparable a la reconstrucción
+    de cuantiles —el lapse calibrado absorbe el error de geometría— pero objetiva).
+11. ~~CI + LICENSE + PyO3~~ ✅.
+12. Próximo: routing por subcuencas; publicar a crates.io/PyPI; paper.
 5. Caso interesante para el paper: 8123001 muestra equifinalidad + no-estacionariedad
    (megasequía post-2010) — benchmark para calibración por gradiente/regularizada.

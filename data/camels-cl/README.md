@@ -139,6 +139,34 @@ Pushing to 10 bands does not help (it raises the between-fold spread:
 overfitting on these short records), so five equal-area bands is the
 operating point. A DEM is the right ingredient; more bands is not.
 
+## Spatial routing — Río Itata (`itata/`)
+
+A second axis of semi-distribution: route several subcatchments to a common
+outlet instead of discretizing one catchment vertically. The Itata is a nested
+CAMELS-CL system — Itata en Cholguán (8123001, headwater, 860 km²) drains down
+to Itata en Balsa Nueva Aldea (8135002, outlet, 4510 km²).
+
+`itata/` holds three forcing series over 1979–2016: `cholguan.csv` (headwater),
+`incremental.csv` (the 3650 km² area between the two gauges, derived as the
+area-weighted difference of the basin-averaged forcing) and `balsa_outlet.csv`
+(the outlet, with observed discharge). `examples/route_itata.rs` models each
+subcatchment with GR4J, converts to m³/s, Muskingum-routes the headwater to the
+outlet, sums the incremental runoff, and compares against the observed outlet
+discharge and a single lumped GR4J — split-sample, DDS, 6000 evaluations:
+
+| period | distributed (2 sub + Muskingum) | lumped GR4J |
+|---|---|---|
+| cal A → val B | 0.872 → **0.866** | 0.841 → 0.787 |
+| cal B → val A | 0.889 → **0.854** | 0.819 → 0.793 |
+
+The distributed model wins by +0.06–0.08 validation NSE. Honest caveat: the
+travel time K calibrates to its lower bound (~0.1 day), so at the daily step
+the Muskingum reach is nearly pass-through on a 4500 km² basin — the gain comes
+from resolving the headwater and the incremental area as **separate
+subcatchments with their own forcing and parameters**, not from channel
+transit per se. Routing would matter more at sub-daily steps or on longer
+reaches; here the value is spatial disaggregation of the forcing.
+
 Reproduce with:
 
 ```sh

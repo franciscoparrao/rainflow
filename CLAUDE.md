@@ -74,6 +74,11 @@ gradiente e híbridos física+ML. La investigación del método vive en
     los atributos CAMELS-CL a pocos metros. Skill comparable a la reconstrucción
     de cuantiles —el lapse calibrado absorbe el error de geometría— pero objetiva).
 11. ~~CI + LICENSE + PyO3~~ ✅.
-12. Próximo: routing por subcuencas; publicar a crates.io/PyPI; paper.
+12. ~~Routing por subcuencas~~ ✅ (módulo `routing`: Muskingum + RiverNetwork
+    árbol de drenaje; validado en Itata anidado Cholguán→Balsa Nueva Aldea:
+    distribuido 2-subcuencas supera al lumped +0.06–0.08 NSE val. K~0.1d: a
+    paso diario el tránsito es casi pasante, la ganancia es la desagregación
+    espacial de forzante/parámetros, no el Muskingum per se).
+13. Próximo: publicar a crates.io/PyPI; paper EMS/JH.
 5. Caso interesante para el paper: 8123001 muestra equifinalidad + no-estacionariedad
    (megasequía post-2010) — benchmark para calibración por gradiente/regularizada.

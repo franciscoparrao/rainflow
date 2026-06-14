@@ -54,7 +54,11 @@ multi-catchment runs.
       (`scripts/hypsometry_from_dem.py`); the clip reproduces CAMELS-CL
       elevation attributes to a few metres. Objective band geometry, same core
       constructor as the quantile reconstruction
-- [ ] Subcatchment routing
+- [x] **Spatial routing by subcatchments** (`routing` module): Muskingum
+      channel routing + a drainage-tree `RiverNetwork` that accumulates and
+      routes subcatchments to the outlet. On the nested Río Itata (Cholguán →
+      Balsa Nueva Aldea) the 2-subcatchment + routing model beats a lumped GR4J
+      by +0.06–0.08 validation NSE (`examples/route_itata.rs`)
 
 ## Layout
 

@@ -10,3 +10,8 @@ repository.workspace = true
 [dependencies]
 num-traits = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+# Forward-mode automatic differentiation: its scalar type implements
+# num_traits::Float, so it flows through the generic model cores unchanged.
+autodiff = "0.7"

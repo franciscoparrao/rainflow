@@ -65,6 +65,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "autodiff"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "599c1cad7c79089d8f05db145c7207ad0e99a512244ac4b1db3aeb00f2d4c1e1"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -307,6 +316,7 @@ dependencies = [
 name = "rainflow-core"
 version = "0.1.0"
 dependencies = [
+ "autodiff",
  "num-traits",
  "thiserror",
 ]

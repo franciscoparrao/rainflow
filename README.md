@@ -59,6 +59,12 @@ multi-catchment runs.
       routes subcatchments to the outlet. On the nested Río Itata (Cholguán →
       Balsa Nueva Aldea) the 2-subcatchment + routing model beats a lumped GR4J
       by +0.06–0.08 validation NSE (`examples/route_itata.rs`)
+- [x] **Gradient calibration via autodiff** — the autodiff-first design pays
+      off: the `autodiff` crate's forward-mode scalar implements
+      `num_traits::Float`, so it flows through `Gr4j` unchanged and yields an
+      analytic loss gradient (matches finite differences to ~1e-9). Adam
+      recovers the true parameters exactly (`examples/gradient_calibration.rs`).
+      This is the substrate for physics+ML hybrids (δHBV-style)
 
 ## Layout
 

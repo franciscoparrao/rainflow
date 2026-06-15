@@ -87,6 +87,10 @@ gradiente e híbridos física+ML. La investigación del método vive en
     un estado dado, continuidad exacta 1e-12; PyO3 expone Gr4jState/HbvState
     opacos con semántica de clonado → nowcast asienta estado, snapshot, fan-out
     de escenarios). rainflow listo como motor de nowcast.
-15. Próximo: publicar a crates.io/PyPI; paper EMS/JH; arrancar nowcast (vía PyO3).
+15. ~~Benchmarks (criterion)~~ ✅ (benches/models.rs + calibration.rs. GR4J ~1.5ms/27yr,
+    HBV ~0.68ms (GR4J paga tanh+2 powf/paso), routing ~78µs. Calibración ~5s/cuenca
+    → 15 cuencas BNA serial ~75s, motiva Rayon. Tabla en README. Hallazgo: cada eval
+    de calibración aloca qsim+pairs; reuso de buffers es optimización futura).
+16. Próximo: Rayon multi-cuenca; serde-state; publicar crates.io/PyPI; paper; nowcast.
 5. Caso interesante para el paper: 8123001 muestra equifinalidad + no-estacionariedad
    (megasequía post-2010) — benchmark para calibración por gradiente/regularizada.

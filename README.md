@@ -129,6 +129,26 @@ dry_q, _ = g.run_from(state, dry_p, dry_pet)    # state is left unchanged,
 wet_q, _ = g.run_from(state, wet_p, wet_pet)    # so it is reusable
 ```
 
+## Performance
+
+`cargo bench -p rainflow-core` (criterion). Figures below on a 12th-gen Intel
+i7-1270P, `--release` with LTO:
+
+| benchmark | time | throughput |
+|---|---|---|
+| GR4J, 10k days (~27 yr) | ~1.5 ms | ~6.4 M steps/s |
+| HBV + snow, 10k days | ~0.68 ms | ~14.6 M steps/s |
+| HBV, 5 elevation bands, 10k days | ~1.9 ms | ~5.4 M steps/s |
+| Muskingum reach, 10k days | ~78 µs | ~129 M steps/s |
+| GR4J calibration (DDS, 2000 evals, 6000 days) | ~5.0 s | — |
+| GR4J calibration (SCE-UA, 4000 evals, 6000 days) | ~4.6 s | — |
+
+GR4J is slower than HBV per step despite being simpler — it pays a `tanh` and
+two `powf` calls per time step where HBV is mostly add/multiply. A full
+calibration is a few seconds per catchment; calibrating the 15 BNA catchments
+serially is ~75 s, which motivates the planned multi-catchment Rayon
+parallelism (calibrations are independent and embarrassingly parallel).
+
 ## Validation
 
 `crates/rainflow-core/tests/airgr_parity.rs` locks GR4J output to a reference

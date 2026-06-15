@@ -15,3 +15,12 @@ thiserror = { workspace = true }
 # Forward-mode automatic differentiation: its scalar type implements
 # num_traits::Float, so it flows through the generic model cores unchanged.
 autodiff = "0.7"
+criterion = "0.8"
+
+[[bench]]
+name = "models"
+harness = false
+
+[[bench]]
+name = "calibration"
+harness = false

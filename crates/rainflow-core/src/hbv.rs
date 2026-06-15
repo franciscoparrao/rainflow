@@ -198,6 +198,20 @@ impl<F: Float> Hbv<F> {
     /// Runs the full series from the default initial state. `temp` may be
     /// `None` for pluvial catchments (snow routine bypassed).
     pub fn run(&self, precip: &[F], pet: &[F], temp: Option<&[F]>) -> Result<Vec<F>, Error> {
+        let mut state = self.initial_state();
+        self.run_from(&mut state, precip, pet, temp)
+    }
+
+    /// Runs the series from a given state (warm-start), advancing `state` in
+    /// place. See [`Gr4j::run_from`](crate::Gr4j::run_from) for the chained-
+    /// forecasting pattern.
+    pub fn run_from(
+        &self,
+        state: &mut HbvState<F>,
+        precip: &[F],
+        pet: &[F],
+        temp: Option<&[F]>,
+    ) -> Result<Vec<F>, Error> {
         if precip.len() != pet.len() {
             return Err(Error::ForcingLengthMismatch {
                 precip: precip.len(),
@@ -212,9 +226,8 @@ impl<F: Float> Hbv<F> {
                 reason: format!("expected {} steps, got {}", precip.len(), t.len()),
             });
         }
-        let mut state = self.initial_state();
         Ok((0..precip.len())
-            .map(|i| self.step(&mut state, precip[i], temp.map(|t| t[i]), pet[i]))
+            .map(|i| self.step(state, precip[i], temp.map(|t| t[i]), pet[i]))
             .collect())
     }
 
@@ -522,6 +535,19 @@ impl<F: Float> HbvBands<F> {
 
     /// Runs the full series from the default initial state.
     pub fn run(&self, precip: &[F], pet: &[F], temp: &[F]) -> Result<Vec<F>, Error> {
+        let mut state = self.initial_state();
+        self.run_from(&mut state, precip, pet, temp)
+    }
+
+    /// Runs the series from a given state (warm-start), advancing `state` in
+    /// place. See [`Gr4j::run_from`](crate::Gr4j::run_from).
+    pub fn run_from(
+        &self,
+        state: &mut HbvBandsState<F>,
+        precip: &[F],
+        pet: &[F],
+        temp: &[F],
+    ) -> Result<Vec<F>, Error> {
         if precip.len() != pet.len() {
             return Err(Error::ForcingLengthMismatch {
                 precip: precip.len(),
@@ -534,9 +560,8 @@ impl<F: Float> HbvBands<F> {
                 reason: format!("expected {} steps, got {}", precip.len(), temp.len()),
             });
         }
-        let mut state = self.initial_state();
         Ok((0..precip.len())
-            .map(|i| self.step(&mut state, precip[i], temp[i], pet[i]))
+            .map(|i| self.step(state, precip[i], temp[i], pet[i]))
             .collect())
     }
 }
@@ -901,6 +926,28 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn warm_start_matches_continuous_run() {
+        // State continuity: one full run == first half + warm-started second.
+        let model = Hbv::new(params()).unwrap();
+        let (p, pet, temp) = synthetic_forcing(1500);
+        let full = model.run(&p, &pet, Some(&temp)).unwrap();
+
+        let k = 700;
+        let mut state = model.initial_state();
+        let first = model
+            .run_from(&mut state, &p[..k], &pet[..k], Some(&temp[..k]))
+            .unwrap();
+        let second = model
+            .run_from(&mut state, &p[k..], &pet[k..], Some(&temp[k..]))
+            .unwrap();
+
+        assert_eq!(first.len() + second.len(), full.len());
+        for (a, b) in first.iter().chain(&second).zip(&full) {
+            assert!((a - b).abs() < 1e-12, "warm-start diverges: {a} vs {b}");
+        }
     }
 
     #[test]

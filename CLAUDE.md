@@ -83,7 +83,10 @@ gradiente e híbridos física+ML. La investigación del método vive en
     num_traits::Float → pasa por GR4J sin tocar el core; gradiente analítico
     valida vs diferencias finitas ~1e-9; Adam recupera params verdaderos exacto.
     `examples/gradient_calibration.rs`. Substrato para híbridos física+ML δHBV).
-14. Próximo: publicar a crates.io/PyPI; paper EMS/JH; nowcast puede arrancar
-    usando rainflow como motor (vía PyO3).
+14. ~~Warm-start desde estado~~ ✅ (`run_from` en GR4J/HBV/HbvBands: corre desde
+    un estado dado, continuidad exacta 1e-12; PyO3 expone Gr4jState/HbvState
+    opacos con semántica de clonado → nowcast asienta estado, snapshot, fan-out
+    de escenarios). rainflow listo como motor de nowcast.
+15. Próximo: publicar a crates.io/PyPI; paper EMS/JH; arrancar nowcast (vía PyO3).
 5. Caso interesante para el paper: 8123001 muestra equifinalidad + no-estacionariedad
    (megasequía post-2010) — benchmark para calibración por gradiente/regularizada.

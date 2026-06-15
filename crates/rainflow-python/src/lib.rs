@@ -9,7 +9,25 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use rainflow_core::calibrate::{self, DdsConfig, Objective, Optimizer, SceConfig};
-use rainflow_core::{ElevationBands, Gr4j as CoreGr4j, Gr4jParams, Hbv as CoreHbv, HbvParams};
+use rainflow_core::{
+    ElevationBands, Gr4j as CoreGr4j, Gr4jParams, Gr4jState as CoreGr4jState, Hbv as CoreHbv,
+    HbvParams, HbvState as CoreHbvState,
+};
+
+/// Opaque GR4J state for warm-started / chained forecasting. Obtained from
+/// [`Gr4j.initial_state`] or [`Gr4j.run_from`]; pass it back to continue.
+#[pyclass(name = "Gr4jState")]
+#[derive(Clone)]
+struct Gr4jState {
+    inner: CoreGr4jState<f64>,
+}
+
+/// Opaque HBV state for warm-started / chained forecasting.
+#[pyclass(name = "HbvState")]
+#[derive(Clone)]
+struct HbvState {
+    inner: CoreHbvState<f64>,
+}
 
 /// Maps a core error to a Python `ValueError`.
 fn err(e: impl std::fmt::Display) -> PyErr {
@@ -69,6 +87,27 @@ impl Gr4j {
     fn run(&self, precip: Vec<f64>, pet: Vec<f64>) -> PyResult<Vec<f64>> {
         self.inner.run(&precip, &pet).map_err(err)
     }
+
+    /// Default initial state (production store 0.3·x1, routing 0.5·x3).
+    fn initial_state(&self) -> Gr4jState {
+        Gr4jState {
+            inner: self.inner.initial_state(),
+        }
+    }
+
+    /// Warm-started run: simulates from `state` and returns
+    /// `(discharge, final_state)`. The input `state` is left unchanged
+    /// (clone semantics), so snapshot once and fan out many forecasts.
+    fn run_from(
+        &self,
+        state: &Gr4jState,
+        precip: Vec<f64>,
+        pet: Vec<f64>,
+    ) -> PyResult<(Vec<f64>, Gr4jState)> {
+        let mut s = state.inner.clone();
+        let q = self.inner.run_from(&mut s, &precip, &pet).map_err(err)?;
+        Ok((q, Gr4jState { inner: s }))
+    }
 }
 
 /// HBV-light daily rainfall–runoff model (Seibert & Vis 2012).
@@ -124,6 +163,31 @@ impl Hbv {
     #[pyo3(signature = (precip, pet, temp=None))]
     fn run(&self, precip: Vec<f64>, pet: Vec<f64>, temp: Option<Vec<f64>>) -> PyResult<Vec<f64>> {
         self.inner.run(&precip, &pet, temp.as_deref()).map_err(err)
+    }
+
+    /// Default initial state (soil at half capacity, empty stores).
+    fn initial_state(&self) -> HbvState {
+        HbvState {
+            inner: self.inner.initial_state(),
+        }
+    }
+
+    /// Warm-started run: simulates from `state`, returns `(discharge,
+    /// final_state)`. The input `state` is left unchanged.
+    #[pyo3(signature = (state, precip, pet, temp=None))]
+    fn run_from(
+        &self,
+        state: &HbvState,
+        precip: Vec<f64>,
+        pet: Vec<f64>,
+        temp: Option<Vec<f64>>,
+    ) -> PyResult<(Vec<f64>, HbvState)> {
+        let mut s = state.inner.clone();
+        let q = self
+            .inner
+            .run_from(&mut s, &precip, &pet, temp.as_deref())
+            .map_err(err)?;
+        Ok((q, HbvState { inner: s }))
     }
 }
 
@@ -258,6 +322,8 @@ fn hypsometric_bands(min: f64, median: f64, max: f64, n: usize) -> PyResult<Vec<
 fn rainflow(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Gr4j>()?;
     m.add_class::<Hbv>()?;
+    m.add_class::<Gr4jState>()?;
+    m.add_class::<HbvState>()?;
     m.add_function(wrap_pyfunction!(nse, m)?)?;
     m.add_function(wrap_pyfunction!(kge, m)?)?;
     m.add_function(wrap_pyfunction!(log_nse, m)?)?;

@@ -59,6 +59,12 @@ multi-catchment runs.
       routes subcatchments to the outlet. On the nested Río Itata (Cholguán →
       Balsa Nueva Aldea) the 2-subcatchment + routing model beats a lumped GR4J
       by +0.06–0.08 validation NSE (`examples/route_itata.rs`)
+- [x] **Warm-start / stateful forecasting** (`run_from`): run from a given
+      model state instead of the default, advancing it in place. Exact state
+      continuity (a split run equals one continuous run to 1e-12). Exposed in
+      Python with opaque `Gr4jState`/`HbvState` objects, so a nowcast can
+      settle the state on history, snapshot it, and fan out forecast scenarios
+      from the snapshot
 - [x] **Gradient calibration via autodiff** — the autodiff-first design pays
       off: the `autodiff` crate's forward-mode scalar implements
       `num_traits::Float`, so it flows through `Gr4j` unchanged and yields an
@@ -114,6 +120,13 @@ print(cal["params"], cal["value"])
 qh = rainflow.Hbv(0.0, 3.5, 0.9, 250.0, 0.7, 2.0, 0.3, 0.1, 0.01, 20.0, 2.0, 2.5).run(
     precip, pet, temp=temperature
 )
+
+# Warm-start / chained forecasting: settle the state on the historical
+# period, snapshot it, then fan out forecast scenarios from the snapshot.
+g = rainflow.Gr4j(350.0, -1.5, 90.0, 1.7)
+hist_q, state = g.run_from(g.initial_state(), hist_p, hist_pet)
+dry_q, _ = g.run_from(state, dry_p, dry_pet)    # state is left unchanged,
+wet_q, _ = g.run_from(state, wet_p, wet_pet)    # so it is reusable
 ```
 
 ## Validation

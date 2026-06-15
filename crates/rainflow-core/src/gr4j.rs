@@ -170,17 +170,31 @@ impl<F: Float> Gr4j<F> {
 
     /// Runs the full series from the default initial state.
     pub fn run(&self, precip: &[F], pet: &[F]) -> Result<Vec<F>, Error> {
+        let mut state = self.initial_state();
+        self.run_from(&mut state, precip, pet)
+    }
+
+    /// Runs the series from a given state (warm-start), advancing `state` to
+    /// the final state in place. Clone the state first if you need to keep the
+    /// starting one. This is the building block for chained forecasting: run
+    /// the historical period to settle the state, snapshot it, then run each
+    /// forecast from the snapshot.
+    pub fn run_from(
+        &self,
+        state: &mut Gr4jState<F>,
+        precip: &[F],
+        pet: &[F],
+    ) -> Result<Vec<F>, Error> {
         if precip.len() != pet.len() {
             return Err(Error::ForcingLengthMismatch {
                 precip: precip.len(),
                 pet: pet.len(),
             });
         }
-        let mut state = self.initial_state();
         Ok(precip
             .iter()
             .zip(pet)
-            .map(|(&p, &e)| self.step(&mut state, p, e))
+            .map(|(&p, &e)| self.step(state, p, e))
             .collect())
     }
 }
@@ -361,6 +375,26 @@ mod tests {
                 (a - *b as f64).abs() < 1e-3,
                 "f32/f64 divergence: {a} vs {b}"
             );
+        }
+    }
+
+    #[test]
+    fn warm_start_matches_continuous_run() {
+        // Running [0..N] in one go must equal running [0..k] then [k..N] from
+        // the snapshot state — exact state continuity.
+        let m = model(350.0, -1.5, 90.0, 1.7);
+        let (p, pet) = synthetic_forcing(1500);
+        let full = m.run(&p, &pet).unwrap();
+
+        let k = 800;
+        let mut state = m.initial_state();
+        let first = m.run_from(&mut state, &p[..k], &pet[..k]).unwrap();
+        // `state` now holds the end-of-first-half state; continue the forecast.
+        let second = m.run_from(&mut state, &p[k..], &pet[k..]).unwrap();
+
+        assert_eq!(first.len() + second.len(), full.len());
+        for (a, b) in first.iter().chain(&second).zip(&full) {
+            assert!((a - b).abs() < 1e-12, "warm-start diverges: {a} vs {b}");
         }
     }
 

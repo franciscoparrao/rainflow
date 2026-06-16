@@ -91,6 +91,9 @@ gradiente e híbridos física+ML. La investigación del método vive en
     HBV ~0.68ms (GR4J paga tanh+2 powf/paso), routing ~78µs. Calibración ~5s/cuenca
     → 15 cuencas BNA serial ~75s, motiva Rayon. Tabla en README. Hallazgo: cada eval
     de calibración aloca qsim+pairs; reuso de buffers es optimización futura).
-16. Próximo: Rayon multi-cuenca; serde-state; publicar crates.io/PyPI; paper; nowcast.
+16. ~~Rayon multi-cuenca~~ ✅ (`rainflow batch`: calibra N cuencas en paralelo;
+    core puro → rayon vive solo en el CLI. Speedup 3.86× en 4 cuencas / 16 threads,
+    serial 2m51s → 44s. Path operacional para las 15 cuencas BNA).
+17. Próximo: serde-state (persistir estado nowcast); publicar crates.io/PyPI; paper; nowcast.
 5. Caso interesante para el paper: 8123001 muestra equifinalidad + no-estacionariedad
    (megasequía post-2010) — benchmark para calibración por gradiente/regularizada.

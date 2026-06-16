@@ -59,6 +59,10 @@ multi-catchment runs.
       routes subcatchments to the outlet. On the nested Río Itata (Cholguán →
       Balsa Nueva Aldea) the 2-subcatchment + routing model beats a lumped GR4J
       by +0.06–0.08 validation NSE (`examples/route_itata.rs`)
+- [x] **Parallel multi-catchment calibration** (`rainflow batch`, rayon): the
+      core calibration functions are pure, so N catchments calibrate
+      independently across cores — 3.86× on four catchments (16 threads), the
+      operational path for the 15 BNA catchments. rayon lives only in the CLI
 - [x] **Warm-start / stateful forecasting** (`run_from`): run from a given
       model state instead of the default, advancing it in place. Exact state
       continuity (a split run equals one continuous run to 1e-12). Exposed in
@@ -93,6 +97,11 @@ cargo build --release
 ./target/release/rainflow calibrate \
     --forcing data/example.csv \
     --objective kge --iterations 2000 --seed 42
+
+# Calibrate many catchments in parallel (one CSV each)
+./target/release/rainflow batch \
+    --forcing basin_a.csv --forcing basin_b.csv --forcing basin_c.csv \
+    --model gr4j --objective kge --output summary.csv
 ```
 
 The forcing CSV needs columns (flexible, case-insensitive names):
@@ -144,10 +153,12 @@ i7-1270P, `--release` with LTO:
 | GR4J calibration (SCE-UA, 4000 evals, 6000 days) | ~4.6 s | — |
 
 GR4J is slower than HBV per step despite being simpler — it pays a `tanh` and
-two `powf` calls per time step where HBV is mostly add/multiply. A full
-calibration is a few seconds per catchment; calibrating the 15 BNA catchments
-serially is ~75 s, which motivates the planned multi-catchment Rayon
-parallelism (calibrations are independent and embarrassingly parallel).
+two `powf` calls per time step where HBV is mostly add/multiply.
+
+Calibration is a few seconds per catchment, and catchments are independent, so
+`rainflow batch` calibrates them in parallel (rayon). Four CAMELS-CL catchments
+(DDS, 2000 evals each): **2m51s serial → 44s on 16 threads, a 3.86× speedup**,
+near-linear in the four jobs. The 15 BNA catchments scale further on more cores.
 
 ## Validation
 

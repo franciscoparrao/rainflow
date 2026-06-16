@@ -22,6 +22,47 @@ enum Cli {
     /// Split-sample test: calibrate on each half of the record, validate on
     /// the other (Klemeš 1986).
     SplitSample(CalibrateArgs),
+    /// Calibrate many catchments in parallel (one forcing CSV each).
+    Batch(BatchArgs),
+}
+
+#[derive(Args)]
+struct BatchArgs {
+    /// Forcing CSVs, one per catchment (repeat the flag or pass several)
+    #[arg(long = "forcing", num_args = 1.., required = true)]
+    forcings: Vec<PathBuf>,
+
+    /// Model to calibrate
+    #[arg(long, value_parser = ["gr4j", "hbv"], default_value = "gr4j")]
+    model: String,
+
+    /// Objective to maximize
+    #[arg(long, value_parser = ["nse", "kge", "lognse"], default_value = "kge")]
+    objective: String,
+
+    /// Optimization algorithm
+    #[arg(long, value_parser = ["dds", "sce"], default_value = "dds")]
+    algorithm: String,
+
+    /// Number of SCE-UA complexes (sce only)
+    #[arg(long, default_value_t = 4)]
+    complexes: usize,
+
+    /// Objective-evaluation budget per catchment
+    #[arg(long, default_value_t = 2000)]
+    iterations: usize,
+
+    /// RNG seed
+    #[arg(long, default_value_t = 42)]
+    seed: u64,
+
+    /// Warm-up steps excluded from the objective
+    #[arg(long, default_value_t = 365)]
+    warmup: usize,
+
+    /// Optional CSV summary (catchment,objective,value,evaluations,params)
+    #[arg(long)]
+    output: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -135,7 +176,99 @@ fn main() -> Result<()> {
         Cli::Run(args) => run(args),
         Cli::Calibrate(args) => calibrate(args),
         Cli::SplitSample(args) => split_sample(args),
+        Cli::Batch(args) => batch(args),
     }
+}
+
+fn batch(args: BatchArgs) -> Result<()> {
+    use rayon::prelude::*;
+
+    let objective = parse_objective(&args.objective)?;
+    let optimizer = match args.algorithm.as_str() {
+        "sce" => Optimizer::Sce(SceConfig {
+            complexes: args.complexes,
+            max_iter: args.iterations,
+            seed: args.seed,
+        }),
+        _ => Optimizer::Dds(DdsConfig {
+            max_iter: args.iterations,
+            seed: args.seed,
+            ..Default::default()
+        }),
+    };
+
+    println!(
+        "Calibrating {} catchments in parallel ({}, {} objective, {} evals each)",
+        args.forcings.len(),
+        args.model,
+        args.objective,
+        args.iterations
+    );
+
+    // The calibration functions are pure, so each catchment is an independent
+    // job; rayon spreads them across cores.
+    let results: Vec<(String, Result<CalOutcome>)> = args
+        .forcings
+        .par_iter()
+        .map(|path| {
+            let name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("?")
+                .to_string();
+            let outcome = forcing::read_csv(path).and_then(|f| {
+                let qobs = f
+                    .qobs
+                    .as_deref()
+                    .context("batch requires an observed discharge column (qobs)")?;
+                calibrate_dispatch(
+                    &args.model,
+                    &f,
+                    qobs,
+                    args.warmup,
+                    objective,
+                    &optimizer,
+                    None,
+                )
+            });
+            (name, outcome)
+        })
+        .collect();
+
+    let mut writer = match &args.output {
+        Some(p) => {
+            Some(csv::Writer::from_path(p).with_context(|| format!("write {}", p.display()))?)
+        }
+        None => None,
+    };
+    if let Some(w) = writer.as_mut() {
+        w.write_record(["catchment", "objective", "value", "evaluations", "params"])?;
+    }
+
+    for (name, outcome) in &results {
+        match outcome {
+            Ok(c) => {
+                println!(
+                    "  {name:<12} {} {:.4}  ({} evals)  [{}]",
+                    args.objective, c.value, c.evaluations, c.desc
+                );
+                if let Some(w) = writer.as_mut() {
+                    w.write_record([
+                        name,
+                        &args.objective,
+                        &format!("{:.6}", c.value),
+                        &c.evaluations.to_string(),
+                        &c.desc,
+                    ])?;
+                }
+            }
+            Err(e) => println!("  {name:<12} FAILED: {e}"),
+        }
+    }
+    if let Some(w) = writer.as_mut() {
+        w.flush()?;
+    }
+    Ok(())
 }
 
 fn split_sample(args: CalibrateArgs) -> Result<()> {

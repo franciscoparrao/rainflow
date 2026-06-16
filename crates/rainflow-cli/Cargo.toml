@@ -16,3 +16,6 @@ rainflow-core = { path = "../rainflow-core" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 csv = { workspace = true }
+# Multi-catchment calibration is embarrassingly parallel; the core functions
+# are pure, so the parallelism lives entirely here in the CLI.
+rayon = "1"

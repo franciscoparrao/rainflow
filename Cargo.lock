@@ -566,6 +566,7 @@ dependencies = [
  "clap",
  "csv",
  "rainflow-core",
+ "rayon",
 ]
 
 [[package]]

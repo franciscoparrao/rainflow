@@ -25,6 +25,8 @@ jobs:
         run: cargo clippy --all-targets
       - name: Test
         run: cargo test
+      - name: Test (serde feature)
+        run: cargo test -p rainflow-core --features serde
 
   python:
     name: python bindings

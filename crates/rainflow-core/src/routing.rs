@@ -26,6 +26,7 @@ fn lit<F: Float>(x: f64) -> F {
 /// time, same time unit as `dt`); `x` is the weighting factor in `[0, 0.5]`
 /// (0 = linear reservoir / maximum attenuation, 0.5 = pure translation).
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Muskingum<F> {
     k: F,
     x: F,
@@ -84,6 +85,7 @@ impl<F: Float> Muskingum<F> {
 
 /// One subcatchment in a [`RiverNetwork`].
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Subcatchment<F> {
     /// Local runoff generated on this subcatchment (already in flow units).
     pub local_runoff: Vec<F>,

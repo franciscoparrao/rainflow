@@ -36,6 +36,7 @@ fn lit<F: Float>(x: f64) -> F {
 
 /// HBV-light parameters (standard notation).
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HbvParams<F> {
     // Snow routine (ignored when no temperature is supplied).
     /// `TT` — rain/snow threshold temperature (°C).
@@ -83,6 +84,7 @@ impl<F: Float> HbvParams<F> {
 
 /// Mutable model state carried between time steps.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HbvState<F> {
     /// Frozen snowpack (mm water equivalent).
     pub snowpack: F,
@@ -307,6 +309,7 @@ fn route<F: Float>(weights: &[F], buffer: &mut [F], qgen: F) -> F {
 /// One elevation band: mean elevation (m a.s.l.) and its fraction of the
 /// catchment area.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ElevationBand<F> {
     pub elevation: F,
     pub area_fraction: F,
@@ -315,6 +318,7 @@ pub struct ElevationBand<F> {
 /// Semi-distributed configuration: elevation bands plus the lapse/gradient
 /// rates used to extrapolate the lumped forcing to each band.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ElevationBands<F> {
     pub bands: Vec<ElevationBand<F>>,
     /// Elevation the forcing series represents (e.g. catchment mean for a
@@ -443,6 +447,7 @@ impl<F: Float> ElevationBands<F> {
 
 /// Per-band snow + soil state of the semi-distributed model.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BandState<F> {
     pub snowpack: F,
     pub liquid_water: F,
@@ -451,6 +456,7 @@ pub struct BandState<F> {
 
 /// State of [`HbvBands`].
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HbvBandsState<F> {
     pub bands: Vec<BandState<F>>,
     pub suz: F,

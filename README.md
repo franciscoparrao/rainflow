@@ -68,7 +68,9 @@ multi-catchment runs.
       continuity (a split run equals one continuous run to 1e-12). Exposed in
       Python with opaque `Gr4jState`/`HbvState` objects, so a nowcast can
       settle the state on history, snapshot it, and fan out forecast scenarios
-      from the snapshot
+      from the snapshot. With the `serde` feature, states (and params) serialize
+      to JSON — `to_json`/`from_json` in Python — so an operational nowcast can
+      persist the state to disk and resume bit-for-bit
 - [x] **Gradient calibration via autodiff** — the autodiff-first design pays
       off: the `autodiff` crate's forward-mode scalar implements
       `num_traits::Float`, so it flows through `Gr4j` unchanged and yields an
@@ -136,6 +138,12 @@ g = rainflow.Gr4j(350.0, -1.5, 90.0, 1.7)
 hist_q, state = g.run_from(g.initial_state(), hist_p, hist_pet)
 dry_q, _ = g.run_from(state, dry_p, dry_pet)    # state is left unchanged,
 wet_q, _ = g.run_from(state, wet_p, wet_pet)    # so it is reusable
+
+# Persist the state to disk and resume in a later run (operational nowcast)
+open("state.json", "w").write(state.to_json())
+# ... next run ...
+state = rainflow.Gr4jState.from_json(open("state.json").read())
+tomorrow_q, state = g.run_from(state, today_p, today_pet)
 ```
 
 ## Performance

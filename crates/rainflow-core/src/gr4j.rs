@@ -27,6 +27,7 @@ fn lit<F: Float>(x: f64) -> F {
 
 /// GR4J parameters (Perrin et al. 2003 notation).
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Gr4jParams<F> {
     /// `x1` — production store capacity (mm), > 0.
     pub x1: F,
@@ -40,6 +41,7 @@ pub struct Gr4jParams<F> {
 
 /// Mutable model state carried between time steps.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Gr4jState<F> {
     /// Production store level (mm), in `[0, x1]`.
     pub s: F,
@@ -395,6 +397,29 @@ mod tests {
         assert_eq!(first.len() + second.len(), full.len());
         for (a, b) in first.iter().chain(&second).zip(&full) {
             assert!((a - b).abs() < 1e-12, "warm-start diverges: {a} vs {b}");
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn state_serde_round_trip_resumes_identically() {
+        // Persist mid-run state to JSON, reload it, and confirm the forecast
+        // continues bit-for-bit — the nowcast persistence path.
+        let m = model(350.0, -1.5, 90.0, 1.7);
+        let (p, pet) = synthetic_forcing(1200);
+        let full = m.run(&p, &pet).unwrap();
+
+        let k = 600;
+        let mut state = m.initial_state();
+        m.run_from(&mut state, &p[..k], &pet[..k]).unwrap();
+
+        // Round-trip the state through JSON (as a nowcast would, to disk).
+        let json = serde_json::to_string(&state).unwrap();
+        let mut restored: Gr4jState<f64> = serde_json::from_str(&json).unwrap();
+
+        let resumed = m.run_from(&mut restored, &p[k..], &pet[k..]).unwrap();
+        for (a, b) in resumed.iter().zip(&full[k..]) {
+            assert!((a - b).abs() < 1e-12, "resumed run diverges: {a} vs {b}");
         }
     }
 

@@ -12,7 +12,8 @@ name = "rainflow"
 crate-type = ["cdylib"]
 
 [dependencies]
-rainflow-core = { path = "../rainflow-core" }
+rainflow-core = { path = "../rainflow-core", features = ["serde"] }
+serde_json = "1"
 
 [dependencies.pyo3]
 version = "0.23"

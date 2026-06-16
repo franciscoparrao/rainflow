@@ -16,17 +16,51 @@ use rainflow_core::{
 
 /// Opaque GR4J state for warm-started / chained forecasting. Obtained from
 /// [`Gr4j.initial_state`] or [`Gr4j.run_from`]; pass it back to continue.
+/// `to_json`/`from_json` persist it to disk so a nowcast can resume.
 #[pyclass(name = "Gr4jState")]
 #[derive(Clone)]
 struct Gr4jState {
     inner: CoreGr4jState<f64>,
 }
 
+#[pymethods]
+impl Gr4jState {
+    /// Serializes the state to a JSON string.
+    fn to_json(&self) -> PyResult<String> {
+        serde_json::to_string(&self.inner).map_err(err)
+    }
+
+    /// Reconstructs a state from a JSON string produced by `to_json`.
+    #[staticmethod]
+    fn from_json(s: &str) -> PyResult<Self> {
+        Ok(Self {
+            inner: serde_json::from_str(s).map_err(err)?,
+        })
+    }
+}
+
 /// Opaque HBV state for warm-started / chained forecasting.
+/// `to_json`/`from_json` persist it to disk so a nowcast can resume.
 #[pyclass(name = "HbvState")]
 #[derive(Clone)]
 struct HbvState {
     inner: CoreHbvState<f64>,
+}
+
+#[pymethods]
+impl HbvState {
+    /// Serializes the state to a JSON string.
+    fn to_json(&self) -> PyResult<String> {
+        serde_json::to_string(&self.inner).map_err(err)
+    }
+
+    /// Reconstructs a state from a JSON string produced by `to_json`.
+    #[staticmethod]
+    fn from_json(s: &str) -> PyResult<Self> {
+        Ok(Self {
+            inner: serde_json::from_str(s).map_err(err)?,
+        })
+    }
 }
 
 /// Maps a core error to a Python `ValueError`.

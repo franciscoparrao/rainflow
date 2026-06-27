@@ -21,6 +21,9 @@ pronóstico operacional y corridas masivas. Hoy: airGR/HBV (R), TUWmodel.
       CAMELS-CL pluviales supera a GR4J: NSE val 0.73–0.77 vs 0.64–0.74).
 - [x] Calibración: DDS (validada vs `airGR::Calibration_Michel`: NSE 0.7956 vs 0.7957)
       y SCE-UA (Duan et al. 1992); seleccionables con `--algorithm dds|sce`.
+      **Desde 2026-06: DDS/SCE-UA se consumen del substrato `forge` (`forge-core`,
+      path dep); `calibrate.rs` solo conserva la API y delega los optimizadores.
+      API pública intacta, paridad airGR y RNG bit-idénticos.**
 - [x] Métricas: NSE, KGE (+componentes), logNSE, PBIAS.
 - [x] Forzantes: series de precipitación/PET (CSV) vía CLI.
 - [x] Validación split-sample (`rainflow split-sample`) sobre 2 cuencas CAMELS-CL
@@ -29,7 +32,8 @@ pronóstico operacional y corridas masivas. Hoy: airGR/HBV (R), TUWmodel.
 - [ ] (v0.2) Semi-distribuido por subcuencas; aporte nival (ver `snowmelt-rs`).
 
 ## Arquitectura tentativa
-- `rainflow-core`: estados del modelo, integración temporal, optimizadores.
+- `rainflow-core`: estados del modelo, integración temporal; optimizadores
+  (DDS/SCE-UA) vía `forge-core`.
 - Targets: native (Rayon para multi-cuenca) + Python (PyO3) + CLI.
 
 ## Validación / paridad numérica

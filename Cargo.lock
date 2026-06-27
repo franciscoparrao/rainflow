@@ -298,6 +298,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
+name = "forge-core"
+version = "0.1.0"
+
+[[package]]
 name = "futures-core"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -575,6 +579,7 @@ version = "0.1.0"
 dependencies = [
  "autodiff",
  "criterion",
+ "forge-core",
  "num-traits",
  "serde",
  "serde_json",

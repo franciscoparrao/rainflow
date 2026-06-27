@@ -10,44 +10,25 @@
 //!   evolution and periodically shuffled. More robust on multimodal surfaces,
 //!   at a higher evaluation cost.
 //!
-//! Both use the same internal SplitMix64 RNG (no external randomness), so a
-//! calibration run is fully reproducible for a given seed.
+//! Both algorithms now live in the **forge** optimization substrate
+//! (`forge-core`); rainflow consumes them rather than re-implementing. The
+//! engine uses one seedable SplitMix64 RNG, so a calibration run is fully
+//! reproducible for a given seed. The thin wrappers below convert between
+//! rainflow's `F: Float` parameter space and forge's `f64` search space, which
+//! is sound because DDS/SCE-UA are derivative-free (no autodiff needed for the
+//! optimizer itself — only the model evaluation stays generic over `F`).
 
+use forge_core::problem::{func, Maximize};
+// Imported as `_`: brings the trait's `optimize` method into scope for forge's
+// `Algorithm` without colliding with rainflow's own `Optimizer` enum below.
+use forge_core::Optimizer as _;
+use forge_core::{Algorithm, Dds, Sce, Termination};
 use num_traits::Float;
 
 use crate::error::Error;
 use crate::gr4j::{Gr4j, Gr4jParams};
 use crate::hbv::{ElevationBands, Hbv, HbvBands, HbvParams};
 use crate::metrics;
-
-/// Deterministic SplitMix64 RNG — small, seedable, good enough for DDS.
-struct SplitMix64(u64);
-
-impl SplitMix64 {
-    fn new(seed: u64) -> Self {
-        Self(seed)
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E3779B97F4A7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
-        z ^ (z >> 31)
-    }
-
-    /// Uniform in [0, 1).
-    fn uniform(&mut self) -> f64 {
-        (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
-    }
-
-    /// Standard normal via Box–Muller.
-    fn normal(&mut self) -> f64 {
-        let u1 = (1.0 - self.uniform()).max(f64::MIN_POSITIVE); // avoid ln(0)
-        let u2 = self.uniform();
-        (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
-    }
-}
 
 /// DDS configuration.
 #[derive(Debug, Clone, Copy)]
@@ -71,31 +52,77 @@ impl Default for DdsConfig {
     }
 }
 
-/// Outcome of a DDS run.
+/// Outcome of an optimization run (shared by DDS and SCE-UA).
 #[derive(Debug, Clone)]
 pub struct DdsResult<F> {
     /// Best parameter vector found.
     pub params: Vec<F>,
-    /// Objective value at `params`.
+    /// Objective value at `params` (in the maximization sense).
     pub value: F,
     /// Objective evaluations actually performed.
     pub evaluations: usize,
 }
 
-/// Maximizes `objective` within `bounds` using DDS.
+/// Converts a forge `f64` candidate into the model's `F` parameter vector.
+#[inline]
+fn to_params<F: Float>(x: &[f64]) -> Vec<F> {
+    x.iter()
+        .map(|&v| F::from(v).expect("f64 candidate must be representable in F"))
+        .collect()
+}
+
+/// Builds a forge maximization problem from `bounds` and a user `objective`,
+/// runs `algo`, and maps the result back into `DdsResult<F>`.
 ///
-/// `init` is the starting solution; when `None`, a uniform random point is
-/// drawn. Objective evaluations returning non-finite values are treated as
-/// rejected candidates, so the search tolerates numerically degenerate
-/// parameter combinations.
-pub fn dds_maximize<F: Float>(
+/// The objective is wrapped in a `RefCell` so a `FnMut` closure can be called
+/// through forge's `Fn`-based [`forge_core::problem::Problem`] (the engine runs
+/// it sequentially, so no aliasing occurs). Non-finite objective values are
+/// passed through as `NaN`, which forge treats as rejected candidates.
+fn run_forge<F: Float>(
     bounds: &[(F, F)],
     init: Option<&[F]>,
-    config: &DdsConfig,
-    mut objective: impl FnMut(&[F]) -> F,
-) -> Result<DdsResult<F>, Error> {
-    let dim = bounds.len();
-    if dim == 0 {
+    algo: Algorithm,
+    max_iter: usize,
+    objective: impl FnMut(&[F]) -> F,
+) -> DdsResult<F> {
+    let fbounds: Vec<(f64, f64)> = bounds
+        .iter()
+        .map(|&(lo, hi)| {
+            (
+                lo.to_f64().expect("lower bound must convert to f64"),
+                hi.to_f64().expect("upper bound must convert to f64"),
+            )
+        })
+        .collect();
+
+    let cell = std::cell::RefCell::new(objective);
+    let problem = Maximize(func(fbounds, move |x: &[f64]| {
+        let xf = to_params::<F>(x);
+        let v = (cell.borrow_mut())(&xf);
+        v.to_f64().unwrap_or(f64::NAN)
+    }));
+
+    let term = Termination::budget(max_iter);
+    let report = match algo {
+        Algorithm::Dds(cfg) => {
+            let init_f64: Option<Vec<f64>> =
+                init.map(|x0| x0.iter().map(|&v| v.to_f64().unwrap_or(f64::NAN)).collect());
+            cfg.optimize_from(&problem, &term, init_f64.as_deref())
+        }
+        other => other.optimize(&problem, &term),
+    };
+
+    DdsResult {
+        params: to_params::<F>(report.best()),
+        value: F::from(report.best_value_maximized())
+            .expect("objective value must be representable in F"),
+        evaluations: report.evaluations,
+    }
+}
+
+/// Validates box bounds: non-empty, every `lower < upper`, no NaN.
+fn check_bounds<F: Float>(bounds: &[(F, F)]) -> Result<(), Error> {
+    if bounds.is_empty() {
         return Err(Error::InvalidParameter {
             name: "bounds",
             reason: "at least one parameter is required".into(),
@@ -110,12 +137,28 @@ pub fn dds_maximize<F: Float>(
             });
         }
     }
+    Ok(())
+}
+
+/// Maximizes `objective` within `bounds` using DDS.
+///
+/// `init` is the starting solution; when `None`, a uniform random point is
+/// drawn. Objective evaluations returning non-finite values are treated as
+/// rejected candidates, so the search tolerates numerically degenerate
+/// parameter combinations.
+pub fn dds_maximize<F: Float>(
+    bounds: &[(F, F)],
+    init: Option<&[F]>,
+    config: &DdsConfig,
+    objective: impl FnMut(&[F]) -> F,
+) -> Result<DdsResult<F>, Error> {
+    check_bounds(bounds)?;
     if let Some(x0) = init
-        && x0.len() != dim
+        && x0.len() != bounds.len()
     {
         return Err(Error::InvalidParameter {
             name: "init",
-            reason: format!("expected {dim} values, got {}", x0.len()),
+            reason: format!("expected {} values, got {}", bounds.len(), x0.len()),
         });
     }
     if config.max_iter < 2 {
@@ -131,74 +174,11 @@ pub fn dds_maximize<F: Float>(
         });
     }
 
-    let mut rng = SplitMix64::new(config.seed);
-    let lit = |v: f64| F::from(v).expect("f64 literal must be representable in F");
-
-    let mut best: Vec<F> = match init {
-        Some(x0) => x0.to_vec(),
-        None => bounds
-            .iter()
-            .map(|&(lo, up)| lo + (up - lo) * lit(rng.uniform()))
-            .collect(),
-    };
-    let mut best_value = objective(&best);
-    let mut evaluations = 1;
-
-    let m = config.max_iter as f64;
-    let mut candidate = best.clone();
-    for i in 1..config.max_iter {
-        // P(perturb dim) decays from ~1 to 1/m over the budget.
-        let p = 1.0 - (i as f64).ln() / m.ln();
-
-        candidate.copy_from_slice(&best);
-        let mut perturbed = 0;
-        for (j, &(lo, up)) in bounds.iter().enumerate() {
-            if rng.uniform() < p {
-                candidate[j] = perturb(best[j], lo, up, config.r, &mut rng);
-                perturbed += 1;
-            }
-        }
-        if perturbed == 0 {
-            // Always perturb at least one randomly chosen dimension.
-            let j = (rng.next_u64() % dim as u64) as usize;
-            let (lo, up) = bounds[j];
-            candidate[j] = perturb(best[j], lo, up, config.r, &mut rng);
-        }
-
-        let value = objective(&candidate);
-        evaluations += 1;
-        if value.is_finite() && (!best_value.is_finite() || value > best_value) {
-            best.copy_from_slice(&candidate);
-            best_value = value;
-        }
-    }
-
-    Ok(DdsResult {
-        params: best,
-        value: best_value,
-        evaluations,
-    })
-}
-
-/// One-dimensional DDS neighborhood move with boundary reflection.
-fn perturb<F: Float>(x: F, lo: F, up: F, r: f64, rng: &mut SplitMix64) -> F {
-    let lit = |v: f64| F::from(v).expect("f64 literal must be representable in F");
-    let range = up - lo;
-    let mut xn = x + range * lit(r * rng.normal());
-    // Reflect once at each bound; if still outside, clamp to the bound
-    // (Tolson & Shoemaker 2007, eq. 4).
-    if xn < lo {
-        xn = lo + (lo - xn);
-        if xn > up {
-            xn = lo;
-        }
-    } else if xn > up {
-        xn = up - (xn - up);
-        if xn < lo {
-            xn = up;
-        }
-    }
-    xn
+    let algo = Algorithm::Dds(Dds {
+        r: config.r,
+        seed: config.seed,
+    });
+    Ok(run_forge(bounds, init, algo, config.max_iter, objective))
 }
 
 /// SCE-UA configuration (Shuffled Complex Evolution; Duan et al. 1992).
@@ -255,23 +235,9 @@ impl Optimizer {
 pub fn sce_maximize<F: Float>(
     bounds: &[(F, F)],
     config: &SceConfig,
-    mut objective: impl FnMut(&[F]) -> F,
+    objective: impl FnMut(&[F]) -> F,
 ) -> Result<DdsResult<F>, Error> {
-    let n = bounds.len();
-    if n == 0 {
-        return Err(Error::InvalidParameter {
-            name: "bounds",
-            reason: "at least one parameter is required".into(),
-        });
-    }
-    for (i, &(lo, up)) in bounds.iter().enumerate() {
-        if lo.partial_cmp(&up) != Some(std::cmp::Ordering::Less) {
-            return Err(Error::InvalidParameter {
-                name: "bounds",
-                reason: format!("dimension {i}: lower bound must be < upper bound"),
-            });
-        }
-    }
+    check_bounds(bounds)?;
     if config.complexes == 0 {
         return Err(Error::InvalidParameter {
             name: "complexes",
@@ -279,11 +245,10 @@ pub fn sce_maximize<F: Float>(
         });
     }
 
-    // Standard SCE-UA complex geometry (Duan et al. 1992).
-    let m = 2 * n + 1; // points per complex
-    let q = n + 1; // points per sub-complex (simplex)
-    let beta = m; // evolution steps per complex per shuffle
-    let pop_size = config.complexes * m;
+    // Standard SCE-UA complex geometry (Duan et al. 1992): m = 2n+1 points per
+    // complex. The initial population must fit inside the evaluation budget.
+    let n = bounds.len();
+    let pop_size = config.complexes * (2 * n + 1);
     if config.max_iter < pop_size {
         return Err(Error::InvalidParameter {
             name: "max_iter",
@@ -291,159 +256,11 @@ pub fn sce_maximize<F: Float>(
         });
     }
 
-    let mut rng = SplitMix64::new(config.seed);
-    let lit = |v: f64| F::from(v).expect("f64 literal must be representable in F");
-    // Minimize -objective; rejected (non-finite) candidates score +inf.
-    let inf = F::infinity();
-    let eval = |x: &[F], objective: &mut dyn FnMut(&[F]) -> F| -> F {
-        let v = objective(x);
-        if v.is_finite() { -v } else { inf }
-    };
-
-    let sample = |rng: &mut SplitMix64| -> Vec<F> {
-        bounds
-            .iter()
-            .map(|&(lo, up)| lo + (up - lo) * lit(rng.uniform()))
-            .collect()
-    };
-
-    // Initial population (each entry: parameter vector + its score).
-    let mut pop: Vec<(Vec<F>, F)> = Vec::with_capacity(pop_size);
-    for _ in 0..pop_size {
-        let x = sample(&mut rng);
-        let f = eval(&x, &mut objective);
-        pop.push((x, f));
-    }
-    let mut evaluations = pop_size;
-
-    let cmp = |a: &(Vec<F>, F), b: &(Vec<F>, F)| {
-        a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
-    };
-
-    while evaluations < config.max_iter {
-        pop.sort_by(cmp);
-
-        // Partition the rank-sorted population into p complexes round-robin.
-        for k in 0..config.complexes {
-            let mut complex: Vec<(Vec<F>, F)> = (0..m)
-                .map(|j| pop[k + j * config.complexes].clone())
-                .collect();
-
-            // Competitive Complex Evolution: evolve the complex `beta` times.
-            for _ in 0..beta {
-                if evaluations >= config.max_iter {
-                    break;
-                }
-                complex.sort_by(cmp);
-                // Triangular selection: bias parents toward better points.
-                let parents = triangular_subset(m, q, &mut rng);
-                let worst_idx = *parents.last().unwrap();
-
-                // Centroid of the q-1 best parents (exclude the worst).
-                let mut centroid = vec![F::zero(); n];
-                for &pi in &parents[..q - 1] {
-                    for (c, &v) in centroid.iter_mut().zip(&complex[pi].0) {
-                        *c = *c + v;
-                    }
-                }
-                let qm1 = lit((q - 1) as f64);
-                for c in &mut centroid {
-                    *c = *c / qm1;
-                }
-
-                // Reflection of the worst through the centroid.
-                let worst = complex[worst_idx].0.clone();
-                let mut trial: Vec<F> = (0..n)
-                    .map(|d| centroid[d] + (centroid[d] - worst[d]))
-                    .collect();
-                let in_bounds = trial
-                    .iter()
-                    .zip(bounds)
-                    .all(|(&v, &(lo, up))| v >= lo && v <= up);
-
-                let mut tf;
-                if in_bounds {
-                    tf = eval(&trial, &mut objective);
-                    evaluations += 1;
-                    if tf >= complex[worst_idx].1 {
-                        // Reflection failed: try contraction toward centroid.
-                        let half = lit(0.5);
-                        trial = (0..n).map(|d| (centroid[d] + worst[d]) * half).collect();
-                        tf = eval(&trial, &mut objective);
-                        evaluations += 1;
-                        if tf >= complex[worst_idx].1 {
-                            // Contraction failed too: random mutation in hull.
-                            trial = sample_in_hull(&complex, bounds, &mut rng);
-                            tf = eval(&trial, &mut objective);
-                            evaluations += 1;
-                        }
-                    }
-                } else {
-                    // Out of bounds: random mutation in the complex's hull.
-                    trial = sample_in_hull(&complex, bounds, &mut rng);
-                    tf = eval(&trial, &mut objective);
-                    evaluations += 1;
-                }
-
-                complex[worst_idx] = (trial, tf);
-            }
-
-            // Shuffle the evolved complex back into the population.
-            for (j, point) in complex.into_iter().enumerate() {
-                pop[k + j * config.complexes] = point;
-            }
-        }
-    }
-
-    pop.sort_by(cmp);
-    let best = &pop[0];
-    Ok(DdsResult {
-        params: best.0.clone(),
-        value: -best.1, // back to maximization sense
-        evaluations,
-    })
-}
-
-/// Picks `q` distinct indices from `0..m` with a triangular probability that
-/// favors lower (better, since the complex is rank-sorted) indices, returned
-/// sorted ascending (Duan et al. 1992, eq. for the trapezoidal distribution).
-fn triangular_subset(m: usize, q: usize, rng: &mut SplitMix64) -> Vec<usize> {
-    let mut chosen = Vec::with_capacity(q);
-    let mf = m as f64;
-    while chosen.len() < q {
-        // P(i) = 2(m+1-i-1)/(m(m+1)); inverse-CDF sampling on rank.
-        let u = rng.uniform();
-        let idx = ((mf + 0.5) - ((mf + 0.5).powi(2) - mf * (mf + 1.0) * u).sqrt()) as usize;
-        let idx = idx.min(m - 1);
-        if !chosen.contains(&idx) {
-            chosen.push(idx);
-        }
-    }
-    chosen.sort_unstable();
-    chosen
-}
-
-/// Uniform sample inside the smallest axis-aligned box containing the complex,
-/// clamped to the global bounds (SCE-UA's mutation step).
-fn sample_in_hull<F: Float>(
-    complex: &[(Vec<F>, F)],
-    bounds: &[(F, F)],
-    rng: &mut SplitMix64,
-) -> Vec<F> {
-    let lit = |v: f64| F::from(v).expect("f64 literal must be representable in F");
-    let n = bounds.len();
-    (0..n)
-        .map(|d| {
-            let mut lo = complex[0].0[d];
-            let mut hi = lo;
-            for point in complex {
-                lo = lo.min(point.0[d]);
-                hi = hi.max(point.0[d]);
-            }
-            let v = lo + (hi - lo) * lit(rng.uniform());
-            v.max(bounds[d].0).min(bounds[d].1)
-        })
-        .collect()
+    let algo = Algorithm::Sce(Sce {
+        complexes: config.complexes,
+        seed: config.seed,
+    });
+    Ok(run_forge(bounds, None, algo, config.max_iter, objective))
 }
 
 /// Calibration objective for GR4J.
@@ -774,17 +591,6 @@ pub fn calibrate_hbv_bands<F: Float>(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn rng_is_deterministic_and_uniform_in_range() {
-        let mut a = SplitMix64::new(7);
-        let mut b = SplitMix64::new(7);
-        for _ in 0..1000 {
-            let v = a.uniform();
-            assert_eq!(v, b.uniform());
-            assert!((0.0..1.0).contains(&v));
-        }
-    }
 
     #[test]
     fn dds_finds_the_sphere_optimum() {

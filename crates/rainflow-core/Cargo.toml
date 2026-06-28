@@ -12,7 +12,8 @@ num-traits = { workspace = true }
 thiserror = { workspace = true }
 # Optimization substrate: DDS/SCE-UA (originally validated here against airGR)
 # now live in forge, which rainflow consumes rather than re-implementing.
-forge-core = { path = "../../../forge/forge-core" }
+# Published on crates.io as `metalforge`; the library name is `forge_core`.
+forge-core = { version = "0.1", package = "metalforge" }
 # Optional: derive Serialize/Deserialize on params and states so a nowcast can
 # persist a model's state to disk and resume. Off by default (core stays light).
 serde = { version = "1", features = ["derive"], optional = true }

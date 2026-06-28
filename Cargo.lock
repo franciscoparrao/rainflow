@@ -298,10 +298,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
-name = "forge-core"
-version = "0.1.0"
-
-[[package]]
 name = "futures-core"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -403,6 +399,12 @@ checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
 ]
+
+[[package]]
+name = "metalforge"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b18bfcb6a8d70b1b560c83b42f773894520a24cf3742365efdbfd08c58e8b4f"
 
 [[package]]
 name = "num-traits"
@@ -579,7 +581,7 @@ version = "0.1.0"
 dependencies = [
  "autodiff",
  "criterion",
- "forge-core",
+ "metalforge",
  "num-traits",
  "serde",
  "serde_json",
